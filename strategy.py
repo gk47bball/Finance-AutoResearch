@@ -28,7 +28,7 @@ SCREENS = [
     {"metric": "market_cap",        "op": ">=", "value": 2_000_000_000},
     {"metric": "avg_volume_30d",    "op": ">=", "value": 500_000},
     {"metric": "revenue_growth_1y", "op": ">",  "value": 0.0},
-    {"metric": "debt_to_equity",    "op": "<",  "value": 3.0},
+    {"metric": "debt_to_equity",    "op": "<",  "value": 2.0},
     {"metric": "current_ratio",     "op": ">",  "value": 1.0},
 ]
 
