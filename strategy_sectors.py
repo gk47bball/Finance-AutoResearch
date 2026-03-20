@@ -55,7 +55,7 @@ FACTORS = {
     "trend": {
         "weight": 0.40,
         "sub_factors": {
-            "return_12m_1m":    1.00,   # Proxy for relative strength
+            "return_3m":    1.00,   # Short-term trend captures regime shifts
         },
     },
 }
@@ -64,7 +64,7 @@ FACTORS = {
 # Portfolio Construction
 # ---------------------------------------------------------------------------
 PORTFOLIO = {
-    "top_n": 4,                         # Hold top 4 sectors
+    "top_n": 3,                         # Hold top 3 sectors — concentrated momentum
     "weighting": "score_weighted",       # Weight by signal strength
     "max_sector_pct": 1.0,              # No sector cap (sectors ARE the positions)
     "rebalance_frequency": "monthly",
