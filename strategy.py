@@ -77,7 +77,7 @@ FACTORS = {
 # ---------------------------------------------------------------------------
 PORTFOLIO = {
     "top_n": 15,                            # Number of stocks to hold
-    "weighting": "equal",                   # equal | score_weighted
+    "weighting": "score_weighted",           # equal | score_weighted
     "max_sector_pct": 0.30,                 # Max 30% in any single sector
     "rebalance_frequency": "quarterly",     # quarterly | monthly
 }
