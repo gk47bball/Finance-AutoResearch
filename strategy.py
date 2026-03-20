@@ -7,8 +7,8 @@ The optimizer agent reads this, proposes changes, and evaluates results
 via walk-forward backtesting with Sharpe ratio as the primary metric.
 
 Last modified: 2026-03-20
-Experiment: 55 — Exclude Energy sector (commodity-driven, not fundamentals-driven; scoring model penalizes volatile earnings)
-Hypothesis: Energy companies have fundamentals driven by commodity prices not business quality; our multi-factor model doesn't handle them well
+Experiment: 56 — Also exclude Utilities (rate-sensitive regulated businesses; fundamentals less predictive of alpha)
+Hypothesis: Utilities are defensive/bond proxies driven by interest rates, not business quality factors — excluding them focuses on alpha-generating sectors
 Sharpe: 1.4293 (best)
 """
 
@@ -18,7 +18,7 @@ Sharpe: 1.4293 (best)
 UNIVERSE = {
     "source": "sp500",                      # sp500 | custom
     "min_market_cap": 2_000_000_000,        # $2B minimum
-    "exclude_sectors": ["Financial Services", "Energy"],  # Financials: leverage; Energy: commodity-driven
+    "exclude_sectors": ["Financial Services", "Energy", "Utilities"],  # Financials/Energy/Utilities: structural reasons
     "exclude_tickers": [],                  # specific exclusions
 }
 
