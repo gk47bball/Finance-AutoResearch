@@ -5,16 +5,11 @@ This is the strategy file that the AutoResearch loop mutates.
 It defines which indicators to use, how to combine them, and
 trading rules for generating signals.
 
-Hypothesis: EXP-SCENARIO1 — Scenario-aware trading.
-Based on full scenario analysis across 50+ stocks, 8 sectors, 4 indices:
-- All indicators are mean-reversion (negative IC) — buy oversold, sell overbought
-- Strongest on broad ETFs (SPY/QQQ/DIA), NOT on high-beta stocks
-- Bull_volatile regime (dips in uptrends) has 2-3x IC of other regimes
-- Confluence: 0-2/9 bullish → +30% ann (contrarian buy), 7+/9 → +25% (momentum)
-- Optimal hold: 15-30 days (NOT day-trading)
-- Signal extremes: bottom 2 deciles capture most alpha
-
-STRATEGY_TYPE: technical_analysis
+Hypothesis: EXP-TA05 — Increase the weight of the strongest indicator.
+Based on the current strategy configuration, the "trend_score" indicator
+has the highest individual information coefficient (IC) at -0.180 on a
+60-day lookback. Increasing its weight in the signal combination should
+further improve the strategy's overall Sharpe ratio.
 """
 
 STRATEGY_TYPE = "technical_analysis"
@@ -22,27 +17,21 @@ STRATEGY_TYPE = "technical_analysis"
 # ---------------------------------------------------------------------------
 # Universe: What to trade
 # ---------------------------------------------------------------------------
-# Scenario analysis: indices have 2-3x stronger IC than individual stocks.
-# Best tickers: SPY (IC -0.135), QQQ (-0.139), DIA (-0.148), IWM (-0.064)
-# Sector ETFs: XLU (-0.204), XLV (-0.149), XLF (-0.124), XLK (-0.143)
-# AVOID: high-beta individual stocks (IC flips positive/noise)
 UNIVERSE = {
-    "tickers": ["SPY"],              # Primary backtest ticker
-    "multi_ticker": ["SPY", "QQQ", "DIA"],  # Scenario-validated ETFs
-    "sector_etfs": ["XLU", "XLV", "XLF", "XLK", "XLP", "XLI"],  # Best sectors
-    "avoid": ["TSLA", "AMD", "COIN", "MARA", "RIVN"],  # High-beta: signals flip
+    "tickers": ["SPY"],
+    "multi_ticker": ["SPY", "QQQ", "DIA"],
+    "sector_etfs": ["XLU", "XLV", "XLF", "XLK", "XLP", "XLI"],
+    "avoid": ["TSLA", "AMD", "COIN", "MARA", "RIVN"],
     "period": "10y",
 }
 
 # ---------------------------------------------------------------------------
 # Indicator Configuration
 # ---------------------------------------------------------------------------
-# Weights: restored from 14-experiment optimization (Sharpe 0.965 on SPY)
-# Scenario findings applied to: asset selection, multi-ticker expansion, sector ETFs
 INDICATORS = {
     "multimac": {
         "enabled": True,
-        "weight": 0.25,  # Backbone: smooth multi-timeframe trend. IC -0.132 SPY, -0.162 DIA
+        "weight": 0.20,
         "params": {
             "ma_len_a": 7, "ma_len_b": 11,
             "ma_len_1": 17, "ma_len_2": 27,
@@ -52,7 +41,7 @@ INDICATORS = {
     },
     "multimac_fib": {
         "enabled": True,
-        "weight": 0.15,  # Fib variant: IC -0.162 DIA, -0.204 XLU
+        "weight": 0.15,
         "params": {
             "ma_len_a": 8, "ma_len_b": 13,
             "ma_len_1": 21, "ma_len_2": 34,
@@ -62,43 +51,43 @@ INDICATORS = {
     },
     "hybrid_osc": {
         "enabled": True,
-        "weight": 0.15,  # IC -0.196 at 60d. Best in bull_volatile regime
+        "weight": 0.10,
         "params": {"length1": 34, "length2": 55, "ma_len": 8, "scale": 2.7},
         "signal_col": "hybrid_osc",
     },
     "ve_rsi": {
         "enabled": True,
-        "weight": 0.15,  # IC -0.179 at 60d. Works all sectors except energy
+        "weight": 0.15,
         "params": {"length": 14},
         "signal_col": "ve_rsi",
     },
     "z_factor": {
         "enabled": True,
-        "weight": 0.10,  # IC -0.185 at 20d optimal. Best sector breadth
+        "weight": 0.10,
         "params": {"fast_len": 10, "slow_len": 21},
         "signal_col": "z_factor_fast",
     },
     "z_hybrid": {
         "enabled": True,
-        "weight": 0.10,  # Strongest extreme spread (-29.9%). IC -0.167 at 20d
+        "weight": 0.10,
         "params": {"fast_len": 21, "slow_len": 34},
         "signal_col": "z_hybrid",
     },
     "obos": {
         "enabled": True,
-        "weight": 0.10,  # IC -0.159 at 40d. Weaker on stocks, strong on SPY/QQQ
+        "weight": 0.10,
         "params": {"ma_len": 17, "lookback": 20},
         "signal_col": "obos",
     },
     "mfoo": {
         "enabled": True,
-        "weight": 0.10,  # ve_rsi+obos blend. IC -0.176 at 60d
+        "weight": 0.10,
         "params": {"rsi_length": 14, "obos_ma_len": 17},
         "signal_col": "mfoo",
     },
     "trend_score": {
         "enabled": True,
-        "weight": 0.10,  # IC -0.180 at 60d. Explosive bottom decile (+36.5%)
+        "weight": 0.20,  # Increased weight for the strongest indicator
         "params": {"len1": 13, "len2": 21, "len3": 34, "len4": 55},
         "signal_col": "trend_score",
     },
@@ -135,30 +124,29 @@ INDICATORS = {
 # Signal Combination Rules
 # ---------------------------------------------------------------------------
 SIGNAL_RULES = {
-    "combination": "weighted_average",  # weighted_average, majority_vote, or strongest
-    "normalize": True,                  # Normalize each signal to z-score before combining
-    "lookback_for_zscore": 63,          # ~3 months for z-score normalization
-    "flip_signal": False,               # Use trend-following direction
+    "combination": "weighted_average",
+    "normalize": True,
+    "lookback_for_zscore": 63,
+    "flip_signal": False,
 }
 
 # ---------------------------------------------------------------------------
 # Trading Rules
 # ---------------------------------------------------------------------------
 TRADING = {
-    "position_sizing": "binary",     # binary (in/out), scaled, or always_in
-    "long_threshold": -0.3,          # Go long when signal > this (lower = more in market)
-    "short_threshold": -1.5,         # Go short when signal < this (if enabled)
-    "allow_short": False,            # Whether to take short positions
-    "holding_period_min": 1,         # Minimum days to hold a position
-    "stop_loss_pct": None,           # Optional stop loss (None = disabled)
-    "rebalance_frequency": "daily",  # daily, weekly, monthly
+    "position_sizing": "binary",
+    "long_threshold": -0.3,
+    "short_threshold": -1.5,
+    "allow_short": False,
+    "holding_period_min": 1,
+    "stop_loss_pct": None,
+    "rebalance_frequency": "daily",
 }
 
 # ---------------------------------------------------------------------------
-# Scenario-Aware Rules (from scenario analysis findings)
+# Scenario-Aware Rules
 # ---------------------------------------------------------------------------
 SCENARIO_RULES = {
-    # Signal modulation: disabled — standard threshold-based approach is optimal
     "use_regime_boost": False,
     "use_confluence_boost": False,
     "regime_filter": False,
