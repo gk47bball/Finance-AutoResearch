@@ -1,0 +1,22 @@
+cache:
+  db_path: "cache/autoresearch.db"
+  price_ttl_hours: 1
+  fundamental_ttl_hours: 24
+  filing_ttl_hours: 168
+
+backtest:
+  lookback_years: 5
+  rebalance_months: 3
+  benchmark: "SPY"
+  initial_capital: 100000
+  commission_bps: 5
+
+loop:
+  max_experiments: 20
+  time_limit_minutes: 60
+  experiment_timeout_seconds: 300
+  improvement_threshold: 0.02
+
+agent:
+  model: "claude-sonnet-4-6"
+  max_tokens: 4096
