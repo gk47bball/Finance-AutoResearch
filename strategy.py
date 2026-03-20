@@ -7,8 +7,8 @@ The optimizer agent reads this, proposes changes, and evaluates results
 via walk-forward backtesting with Sharpe ratio as the primary metric.
 
 Last modified: 2026-03-20
-Experiment: 30 — Rebalance growth sub-factors: boost EPS growth (0.35→0.50), reduce revenue CAGR proxy (0.40→0.25), keep R&D (0.25)
-Hypothesis: EPS growth is a more direct signal of compounding; revenue CAGR is just proxied from 1yr anyway
+Experiment: 34 — Reduce top_n from 12 to 10 for a more concentrated "best ideas" portfolio
+Hypothesis: Concentrated top-10 improves alpha extraction vs. 12; scoring model is now better-calibrated so top ideas should outperform
 Sharpe: 1.4293 (best)
 """
 
@@ -62,7 +62,7 @@ FACTORS = {
         "sub_factors": {
             "revenue_growth_3y_cagr": 0.25, # Revenue growth CAGR (proxied from 1yr)
             "eps_growth_1y":          0.50,  # EPS growth trailing — more direct compounding signal
-            "rd_to_revenue":          0.25,  # R&D intensity (innovation proxy)
+            "rd_to_revenue":          0.25,  # R&D intensity (neutral placeholder)
         },
     },
     "momentum": {
@@ -77,7 +77,7 @@ FACTORS = {
 # Portfolio Construction
 # ---------------------------------------------------------------------------
 PORTFOLIO = {
-    "top_n": 12,                            # Number of stocks to hold
+    "top_n": 10,                            # Number of stocks to hold
     "weighting": "score_weighted",           # equal | score_weighted
     "max_sector_pct": 0.30,                 # Max 30% in any single sector
     "rebalance_frequency": "quarterly",     # quarterly | monthly
