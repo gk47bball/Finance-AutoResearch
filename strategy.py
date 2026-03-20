@@ -7,8 +7,8 @@ The optimizer agent reads this, proposes changes, and evaluates results
 via walk-forward backtesting with Sharpe ratio as the primary metric.
 
 Last modified: 2026-03-20
-Experiment: 34 — Reduce top_n from 12 to 10 for a more concentrated "best ideas" portfolio
-Hypothesis: Concentrated top-10 improves alpha extraction vs. 12; scoring model is now better-calibrated so top ideas should outperform
+Experiment: 36 — Add operating_margin to quality sub-factors; rebalance weights
+Hypothesis: Operating margin captures business model quality beyond gross margin (shows operating leverage); 5th quality sub-factor
 Sharpe: 1.4293 (best)
 """
 
@@ -51,10 +51,11 @@ FACTORS = {
     "quality": {
         "weight": 0.30,
         "sub_factors": {
-            "roe":                  0.30,   # Return on equity
-            "gross_margin":         0.30,   # Gross margin (Novy-Marx profitability proxy)
-            "roa":                  0.20,   # Return on assets (capital efficiency)
-            "debt_to_equity_inv":   0.20,   # 1/(1+D/E) — lower debt = higher score
+            "roe":                  0.25,   # Return on equity
+            "gross_margin":         0.25,   # Gross margin (Novy-Marx profitability proxy)
+            "operating_margin":     0.20,   # Operating margin (business model quality)
+            "roa":                  0.15,   # Return on assets (capital efficiency)
+            "debt_to_equity_inv":   0.15,   # 1/(1+D/E) — lower debt = higher score
         },
     },
     "growth": {
