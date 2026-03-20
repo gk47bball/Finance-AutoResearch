@@ -7,8 +7,8 @@ The optimizer agent reads this, proposes changes, and evaluates results
 via walk-forward backtesting with Sharpe ratio as the primary metric.
 
 Last modified: 2026-03-20
-Experiment: 53 — Reduce growth to 0.25, boost quality to 0.40 (with single EPS signal, growth is noisier; quality is more stable)
-Hypothesis: Pure EPS growth is noisy in downturns; balanced weight with stronger quality gives better risk-adjusted returns
+Experiment: 55 — Exclude Energy sector (commodity-driven, not fundamentals-driven; scoring model penalizes volatile earnings)
+Hypothesis: Energy companies have fundamentals driven by commodity prices not business quality; our multi-factor model doesn't handle them well
 Sharpe: 1.4293 (best)
 """
 
@@ -18,7 +18,7 @@ Sharpe: 1.4293 (best)
 UNIVERSE = {
     "source": "sp500",                      # sp500 | custom
     "min_market_cap": 2_000_000_000,        # $2B minimum
-    "exclude_sectors": ["Financial Services"],  # Financials have structural high leverage
+    "exclude_sectors": ["Financial Services", "Energy"],  # Financials: leverage; Energy: commodity-driven
     "exclude_tickers": [],                  # specific exclusions
 }
 
