@@ -7,8 +7,8 @@ The optimizer agent reads this, proposes changes, and evaluates results
 via walk-forward backtesting with Sharpe ratio as the primary metric.
 
 Last modified: 2026-03-20
-Experiment: 48 — Boost ROE weight in quality to 0.30 and gross_margin to 0.40, reduce operating_margin to 0.05 and roa to 0.10
-Hypothesis: ROE + gross_margin is the "compounder" combination; ROE shows returns on capital, gross_margin shows structural advantage; reduce weaker signals
+Experiment: 51 — Remove revenue_growth_3y_cagr (duplicate of revenue_growth_1y in scoring.py); give weight to eps_growth
+Hypothesis: revenue_growth_3y_cagr maps to same ratio as revenue_growth_1y — it's a duplicate signal. Removing it and boosting eps_growth_1y to 0.75 de-duplicates growth factor
 Sharpe: 1.4293 (best)
 """
 
@@ -54,7 +54,7 @@ FACTORS = {
         "sub_factors": {
             "gross_margin":         0.40,   # Gross margin — Novy-Marx best quality signal
             "roe":                  0.30,   # Return on equity — compounder signal
-            "operating_margin":     0.05,   # Operating margin (correlated with gross_margin)
+            "operating_margin":     0.05,   # Operating margin (small signal, not removed)
             "roa":                  0.10,   # Return on assets (capital efficiency)
             "debt_to_equity_inv":   0.15,   # 1/(1+D/E) — lower debt = higher score
         },
@@ -62,9 +62,8 @@ FACTORS = {
     "growth": {
         "weight": 0.30,
         "sub_factors": {
-            "revenue_growth_3y_cagr": 0.25, # Revenue growth CAGR (proxied from 1yr)
-            "eps_growth_1y":          0.50,  # EPS growth trailing — more direct compounding signal
-            "rd_to_revenue":          0.25,  # R&D intensity (neutral placeholder)
+            "revenue_growth_1y":    0.25,   # Revenue growth year-over-year
+            "eps_growth_1y":        0.75,   # EPS growth — primary growth signal (compounding)
         },
     },
     "momentum": {
