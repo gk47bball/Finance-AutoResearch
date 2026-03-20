@@ -7,8 +7,8 @@ The optimizer agent reads this, proposes changes, and evaluates results
 via walk-forward backtesting with Sharpe ratio as the primary metric.
 
 Last modified: 2026-03-20
-Experiment: 45 — GARP tilt: reduce value to 0.10, quality 0.35, growth 0.30, momentum 0.25
-Hypothesis: In post-2010 markets, growth+quality is dominant. Value signal is weaker with yfinance data. GARP allocation may be more predictive
+Experiment: 47 — Add dividend_yield to value sub-factors; rebalance value weights
+Hypothesis: Dividend yield is a strong value signal (dividend growers outperform long-term); adding it diversifies the value factor
 Sharpe: 1.4293 (best)
 """
 
@@ -43,9 +43,10 @@ FACTORS = {
     "value": {
         "weight": 0.10,
         "sub_factors": {
-            "earnings_yield":       0.30,   # 1/PE — higher = cheaper
-            "fcf_yield":            0.40,   # FCF/market cap — manipulation-resistant
-            "ps_ratio_inv":         0.30,   # 1/P-to-Sales — more reliably populated
+            "earnings_yield":       0.25,   # 1/PE — higher = cheaper
+            "fcf_yield":            0.35,   # FCF/market cap — manipulation-resistant
+            "ps_ratio_inv":         0.25,   # 1/P-to-Sales — more reliably populated
+            "dividend_yield":       0.15,   # Dividend yield — quality income signal
         },
     },
     "quality": {
