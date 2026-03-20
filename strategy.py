@@ -7,8 +7,9 @@ The optimizer agent reads this, proposes changes, and evaluates results
 via walk-forward backtesting with Sharpe ratio as the primary metric.
 
 Last modified: 2026-03-20
-Experiment: baseline
-Sharpe: (not yet evaluated)
+Experiment: 1 — Reduce top_n from 20→15 for more concentrated alpha
+Hypothesis: Spreading across 20 equal-weight dilutes the highest-scored names; concentrating to 15 improves signal-to-noise
+Sharpe: (testing)
 """
 
 # ---------------------------------------------------------------------------
@@ -76,7 +77,7 @@ FACTORS = {
 # Portfolio Construction
 # ---------------------------------------------------------------------------
 PORTFOLIO = {
-    "top_n": 20,                            # Number of stocks to hold
+    "top_n": 15,                            # Number of stocks to hold
     "weighting": "equal",                   # equal | score_weighted
     "max_sector_pct": 0.30,                 # Max 30% in any single sector
     "rebalance_frequency": "quarterly",     # quarterly | monthly
