@@ -7,8 +7,8 @@ The optimizer agent reads this, proposes changes, and evaluates results
 via walk-forward backtesting with Sharpe ratio as the primary metric.
 
 Last modified: 2026-03-20
-Experiment: 52 — Pure EPS growth signal: eps_growth_1y 1.00 (remove revenue_growth_1y)
-Hypothesis: EPS growth already subsumes revenue growth; using pure EPS growth gives a cleaner single-signal growth factor
+Experiment: 53 — Reduce growth to 0.25, boost quality to 0.40 (with single EPS signal, growth is noisier; quality is more stable)
+Hypothesis: Pure EPS growth is noisy in downturns; balanced weight with stronger quality gives better risk-adjusted returns
 Sharpe: 1.4293 (best)
 """
 
@@ -50,7 +50,7 @@ FACTORS = {
         },
     },
     "quality": {
-        "weight": 0.35,
+        "weight": 0.40,
         "sub_factors": {
             "gross_margin":         0.40,   # Gross margin — Novy-Marx best quality signal
             "roe":                  0.30,   # Return on equity — compounder signal
@@ -60,7 +60,7 @@ FACTORS = {
         },
     },
     "growth": {
-        "weight": 0.30,
+        "weight": 0.25,
         "sub_factors": {
             "eps_growth_1y":        1.00,   # EPS growth — pure single-signal growth factor
         },
