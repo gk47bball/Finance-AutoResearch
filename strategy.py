@@ -7,8 +7,8 @@ The optimizer agent reads this, proposes changes, and evaluates results
 via walk-forward backtesting with Sharpe ratio as the primary metric.
 
 Last modified: 2026-03-20
-Experiment: 47 — Add dividend_yield to value sub-factors; rebalance value weights
-Hypothesis: Dividend yield is a strong value signal (dividend growers outperform long-term); adding it diversifies the value factor
+Experiment: 48 — Boost ROE weight in quality to 0.30 and gross_margin to 0.40, reduce operating_margin to 0.05 and roa to 0.10
+Hypothesis: ROE + gross_margin is the "compounder" combination; ROE shows returns on capital, gross_margin shows structural advantage; reduce weaker signals
 Sharpe: 1.4293 (best)
 """
 
@@ -52,10 +52,10 @@ FACTORS = {
     "quality": {
         "weight": 0.35,
         "sub_factors": {
-            "gross_margin":         0.35,   # Gross margin — Novy-Marx best quality signal
-            "roe":                  0.25,   # Return on equity
-            "operating_margin":     0.10,   # Operating margin (business model quality)
-            "roa":                  0.15,   # Return on assets (capital efficiency)
+            "gross_margin":         0.40,   # Gross margin — Novy-Marx best quality signal
+            "roe":                  0.30,   # Return on equity — compounder signal
+            "operating_margin":     0.05,   # Operating margin (correlated with gross_margin)
+            "roa":                  0.10,   # Return on assets (capital efficiency)
             "debt_to_equity_inv":   0.15,   # 1/(1+D/E) — lower debt = higher score
         },
     },
