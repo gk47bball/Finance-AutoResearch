@@ -50,10 +50,10 @@ FACTORS = {
     "quality": {
         "weight": 0.30,
         "sub_factors": {
-            "roe":                  0.35,   # Return on equity
-            "gross_margin":         0.25,   # Gross margin
+            "roe":                  0.30,   # Return on equity
+            "gross_margin":         0.30,   # Gross margin (Novy-Marx profitability proxy)
+            "roa":                  0.20,   # Return on assets (capital efficiency)
             "debt_to_equity_inv":   0.20,   # 1/(1+D/E) — lower debt = higher score
-            "interest_coverage":    0.20,   # Interest coverage (proxied)
         },
     },
     "growth": {
