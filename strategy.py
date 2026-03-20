@@ -7,8 +7,8 @@ The optimizer agent reads this, proposes changes, and evaluates results
 via walk-forward backtesting with Sharpe ratio as the primary metric.
 
 Last modified: 2026-03-20
-Experiment: 56 — Also exclude Utilities (rate-sensitive regulated businesses; fundamentals less predictive of alpha)
-Hypothesis: Utilities are defensive/bond proxies driven by interest rates, not business quality factors — excluding them focuses on alpha-generating sectors
+Experiment: 57 — Add ROE screen: require ROE > 10% to focus on compounders
+Hypothesis: Adding an ROE screen > 10% directly enforces the quality screen criteria used in factor scoring, self-reinforcing quality selection
 Sharpe: 1.4293 (best)
 """
 
