@@ -7,8 +7,9 @@ The optimizer agent reads this, proposes changes, and evaluates results
 via walk-forward backtesting with Sharpe ratio as the primary metric.
 
 Last modified: 2026-03-20
-Experiment: 1 — top_n=15 (KEPT, Sharpe 1.2012)
-Sharpe: 1.2012
+Experiment: 30 — Rebalance growth sub-factors: boost EPS growth (0.35→0.50), reduce revenue CAGR proxy (0.40→0.25), keep R&D (0.25)
+Hypothesis: EPS growth is a more direct signal of compounding; revenue CAGR is just proxied from 1yr anyway
+Sharpe: 1.4293 (best)
 """
 
 # ---------------------------------------------------------------------------
@@ -59,8 +60,8 @@ FACTORS = {
     "growth": {
         "weight": 0.25,
         "sub_factors": {
-            "revenue_growth_3y_cagr": 0.40, # Revenue growth CAGR (proxied from 1yr)
-            "eps_growth_1y":          0.35,  # EPS growth trailing
+            "revenue_growth_3y_cagr": 0.25, # Revenue growth CAGR (proxied from 1yr)
+            "eps_growth_1y":          0.50,  # EPS growth trailing — more direct compounding signal
             "rd_to_revenue":          0.25,  # R&D intensity (innovation proxy)
         },
     },

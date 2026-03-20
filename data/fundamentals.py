@@ -144,6 +144,13 @@ def get_key_ratios(ticker: str) -> dict:
     else:
         ratios["debt_to_equity_inv"] = None
 
+    # Low-volatility: invert beta so lower-beta stocks score higher
+    beta = ratios.get("beta")
+    if beta is not None and beta > 0:
+        ratios["beta_inv"] = 1.0 / beta
+    else:
+        ratios["beta_inv"] = None
+
     cache.put(key, ratios)
     return ratios
 

@@ -28,6 +28,7 @@ def _compute_sub_factor(ticker: str, sub_factor_name: str, ratios: dict) -> floa
         "eps_growth_1y": "earnings_growth",
         "dividend_yield": "dividend_yield",
         "beta": "beta",
+        "beta_inv": "beta_inv",             # 1/beta — low vol scores higher
         "ps_ratio_inv": "ps_ratio",   # will be inverted below
         "quick_ratio": "quick_ratio",
     }
