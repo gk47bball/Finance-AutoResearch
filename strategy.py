@@ -7,8 +7,8 @@ The optimizer agent reads this, proposes changes, and evaluates results
 via walk-forward backtesting with Sharpe ratio as the primary metric.
 
 Last modified: 2026-03-20
-Experiment: 41 — Rebalance value sub-factors: increase FCF yield to 0.40 (manipulation-resistant), reduce earnings_yield to 0.30
-Hypothesis: FCF yield is harder to manipulate than earnings-based yield; stronger predictor of cash returns to shareholders
+Experiment: 45 — GARP tilt: reduce value to 0.10, quality 0.35, growth 0.30, momentum 0.25
+Hypothesis: In post-2010 markets, growth+quality is dominant. Value signal is weaker with yfinance data. GARP allocation may be more predictive
 Sharpe: 1.4293 (best)
 """
 
@@ -41,7 +41,7 @@ SCREENS = [
 # Higher values are always better (use _inv suffix for inverted metrics).
 FACTORS = {
     "value": {
-        "weight": 0.20,
+        "weight": 0.10,
         "sub_factors": {
             "earnings_yield":       0.30,   # 1/PE — higher = cheaper
             "fcf_yield":            0.40,   # FCF/market cap — manipulation-resistant
@@ -49,17 +49,17 @@ FACTORS = {
         },
     },
     "quality": {
-        "weight": 0.30,
+        "weight": 0.35,
         "sub_factors": {
             "gross_margin":         0.35,   # Gross margin — Novy-Marx best quality signal
             "roe":                  0.25,   # Return on equity
-            "operating_margin":     0.10,   # Operating margin (correlated with gross_margin)
+            "operating_margin":     0.10,   # Operating margin (business model quality)
             "roa":                  0.15,   # Return on assets (capital efficiency)
             "debt_to_equity_inv":   0.15,   # 1/(1+D/E) — lower debt = higher score
         },
     },
     "growth": {
-        "weight": 0.25,
+        "weight": 0.30,
         "sub_factors": {
             "revenue_growth_3y_cagr": 0.25, # Revenue growth CAGR (proxied from 1yr)
             "eps_growth_1y":          0.50,  # EPS growth trailing — more direct compounding signal
