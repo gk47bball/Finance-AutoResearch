@@ -17,6 +17,11 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(__file__))
 
+from dotenv import load_dotenv
+env_path = os.path.join(os.path.dirname(__file__), ".env")
+if os.path.exists(env_path):
+    load_dotenv(env_path)
+
 import time
 import json
 import shutil
@@ -28,10 +33,23 @@ from rich import box
 
 console = Console()
 
-STRATEGY_PATH = os.path.join(os.path.dirname(__file__), "strategy.py")
-EXPERIMENTS_DIR = os.path.join(os.path.dirname(__file__), "experiments")
-LOG_PATH = os.path.join(EXPERIMENTS_DIR, "log.jsonl")
 PROGRAM_PATH = os.path.join(os.path.dirname(__file__), "program.md")
+
+DOMAIN_STRATEGY_FILES = {
+    "stock_picker": "strategy.py",
+    "sector_rotation": "strategy_sectors.py",
+    "tactical_allocation": "strategy_macro.py",
+    "long_short": "strategy_longshort.py",
+    "crypto_momentum": "strategy_crypto.py",
+}
+
+
+def _get_paths(domain: str):
+    strategy_file = DOMAIN_STRATEGY_FILES.get(domain, "strategy.py")
+    strategy_path = os.path.join(os.path.dirname(__file__), strategy_file)
+    experiments_dir = os.path.join(os.path.dirname(__file__), "experiments", domain)
+    log_path = os.path.join(experiments_dir, "log.jsonl")
+    return strategy_path, strategy_file, experiments_dir, log_path
 
 
 def _read_file(path: str) -> str:
@@ -78,11 +96,11 @@ def _git_commit(repo, message: str):
         console.print(f"[dim]Git commit skipped: {e}[/dim]")
 
 
-def _load_experiment_log() -> list[dict]:
-    if not os.path.exists(LOG_PATH):
+def _load_experiment_log(log_path: str) -> list[dict]:
+    if not os.path.exists(log_path):
         return []
     experiments = []
-    with open(LOG_PATH) as f:
+    with open(log_path) as f:
         for line in f:
             line = line.strip()
             if line:
@@ -90,9 +108,9 @@ def _load_experiment_log() -> list[dict]:
     return experiments
 
 
-def _log_experiment(experiment: dict):
-    os.makedirs(EXPERIMENTS_DIR, exist_ok=True)
-    with open(LOG_PATH, "a") as f:
+def _log_experiment(experiment: dict, experiments_dir: str, log_path: str):
+    os.makedirs(experiments_dir, exist_ok=True)
+    with open(log_path, "a") as f:
         f.write(json.dumps(experiment) + "\n")
 
 
@@ -102,17 +120,21 @@ def _load_program() -> str:
     return ""
 
 
-def run_loop(max_experiments: int = 20, time_limit_minutes: int = 60):
+def run_loop(max_experiments: int = 20, time_limit_minutes: int = 60, domain: str = "stock_picker"):
     """Run the AutoResearch optimization loop."""
     from prepare import load_strategy, run_full_cycle, evaluate, load_config
     from agent.optimizer import StrategyOptimizer
+
+    strategy_path, strategy_file, experiments_dir, log_path = _get_paths(domain)
 
     config = load_config()
     loop_config = config.get("loop", {})
     improvement_threshold = loop_config.get("improvement_threshold", 0.02)
 
     console.print(Panel(
-        "[bold blue]FinAutoResearch Optimization Loop[/bold blue]\n\n"
+        f"[bold blue]FinAutoResearch Optimization Loop[/bold blue]\n\n"
+        f"Domain: {domain}\n"
+        f"Strategy file: {strategy_file}\n"
         f"Max experiments: {max_experiments}\n"
         f"Time limit: {time_limit_minutes} minutes\n"
         f"Improvement threshold: {improvement_threshold}\n"
@@ -124,16 +146,16 @@ def run_loop(max_experiments: int = 20, time_limit_minutes: int = 60):
 
     # Initialize
     repo = _git_init()
-    optimizer = StrategyOptimizer()
+    optimizer = StrategyOptimizer(domain=domain)
     program = _load_program()
 
     # 1. Baseline evaluation
     console.print("\n[yellow]Running baseline evaluation...[/yellow]")
-    baseline_text = _read_file(STRATEGY_PATH)
-    _git_commit(repo, "baseline strategy (loop start)")
+    baseline_text = _read_file(strategy_path)
+    _git_commit(repo, f"baseline {domain} strategy (loop start)")
 
-    strategy = load_strategy()
-    baseline_result = run_full_cycle(strategy, show_progress=True)
+    strategy = load_strategy(domain=domain)
+    baseline_result = run_full_cycle(strategy, show_progress=True, domain=domain)
     baseline_metric = evaluate(baseline_result)
     best_metric = baseline_metric
     best_text = baseline_text
@@ -141,11 +163,12 @@ def run_loop(max_experiments: int = 20, time_limit_minutes: int = 60):
     _log_experiment({
         "experiment_id": 0,
         "timestamp": datetime.now().isoformat(),
+        "domain": domain,
         "hypothesis": "baseline",
         "sharpe": best_metric,
         "metrics": baseline_result.backtest.metrics,
         "kept": True,
-    })
+    }, experiments_dir, log_path)
 
     console.print(f"\n[bold green]Baseline Sharpe: {baseline_metric:.4f}[/bold green]\n")
 
@@ -165,8 +188,8 @@ def run_loop(max_experiments: int = 20, time_limit_minutes: int = 60):
                        f"(elapsed: {elapsed_min:.1f} min, best Sharpe: {best_metric:.4f})")
 
         # 2a. Read current strategy and history
-        current_text = _read_file(STRATEGY_PATH)
-        history = _load_experiment_log()
+        current_text = _read_file(strategy_path)
+        history = _load_experiment_log(log_path)
 
         # 2b. Ask Claude to propose a change
         console.print("  [dim]Proposing strategy change...[/dim]")
@@ -180,10 +203,11 @@ def run_loop(max_experiments: int = 20, time_limit_minutes: int = 60):
             _log_experiment({
                 "experiment_id": i,
                 "timestamp": datetime.now().isoformat(),
+                "domain": domain,
                 "hypothesis": f"proposal_error: {str(e)[:100]}",
                 "sharpe": None,
                 "kept": False,
-            })
+            }, experiments_dir, log_path)
             continue
 
         # 2c. Validate
@@ -193,38 +217,40 @@ def run_loop(max_experiments: int = 20, time_limit_minutes: int = 60):
             _log_experiment({
                 "experiment_id": i,
                 "timestamp": datetime.now().isoformat(),
+                "domain": domain,
                 "hypothesis": f"invalid: {reason}",
                 "sharpe": None,
                 "kept": False,
-            })
+            }, experiments_dir, log_path)
             continue
 
         hypothesis = optimizer.extract_hypothesis(proposed_text)
         console.print(f"  [cyan]Hypothesis: {hypothesis}[/cyan]")
 
         # 2d. Apply change
-        _write_file(STRATEGY_PATH, proposed_text)
-        _git_commit(repo, f"experiment {i}: {hypothesis}")
+        _write_file(strategy_path, proposed_text)
+        _git_commit(repo, f"EXP-{domain[:3].upper()}{i}: {hypothesis}")
 
         # 2e. Run backtest
         console.print("  [dim]Running backtest...[/dim]")
         try:
-            strategy = load_strategy()
-            result = run_full_cycle(strategy, show_progress=False)
+            strategy = load_strategy(domain=domain)
+            result = run_full_cycle(strategy, show_progress=False, domain=domain)
             new_metric = evaluate(result)
         except Exception as e:
             console.print(f"  [red]Backtest failed: {e}[/red]")
-            _write_file(STRATEGY_PATH, best_text)
-            _git_commit(repo, f"revert experiment {i}: backtest error")
+            _write_file(strategy_path, best_text)
+            _git_commit(repo, f"revert EXP-{domain[:3].upper()}{i}: backtest error")
             _log_experiment({
                 "experiment_id": i,
                 "timestamp": datetime.now().isoformat(),
+                "domain": domain,
                 "hypothesis": hypothesis,
                 "sharpe": None,
                 "metrics": {},
                 "kept": False,
                 "error": str(e)[:200],
-            })
+            }, experiments_dir, log_path)
             continue
 
         # 2f. Evaluate: keep or revert
@@ -242,16 +268,17 @@ def run_loop(max_experiments: int = 20, time_limit_minutes: int = 60):
             _log_experiment({
                 "experiment_id": i,
                 "timestamp": datetime.now().isoformat(),
+                "domain": domain,
                 "hypothesis": hypothesis,
                 "sharpe": new_metric,
                 "improvement": improvement,
                 "metrics": result.backtest.metrics,
                 "kept": True,
-            })
+            }, experiments_dir, log_path)
         else:
             # REVERT
-            _write_file(STRATEGY_PATH, best_text)
-            _git_commit(repo, f"revert experiment {i}: no improvement ({new_metric:.4f})")
+            _write_file(strategy_path, best_text)
+            _git_commit(repo, f"revert EXP-{domain[:3].upper()}{i}: no improvement ({new_metric:.4f})")
             console.print(
                 f"  [red]REVERTED[/red] — Sharpe: {new_metric:.4f} "
                 f"({improvement:+.4f})"
@@ -259,20 +286,22 @@ def run_loop(max_experiments: int = 20, time_limit_minutes: int = 60):
             _log_experiment({
                 "experiment_id": i,
                 "timestamp": datetime.now().isoformat(),
+                "domain": domain,
                 "hypothesis": hypothesis,
                 "sharpe": new_metric,
                 "improvement": improvement,
                 "metrics": result.backtest.metrics,
                 "kept": False,
-            })
+            }, experiments_dir, log_path)
 
     # 3. Summary
     elapsed_total = (time.time() - start_time) / 60
 
     console.print(f"\n{'='*60}")
-    summary = Table(title="Optimization Summary", box=box.ROUNDED)
+    summary = Table(title=f"Optimization Summary — {domain}", box=box.ROUNDED)
     summary.add_column("", style="cyan")
     summary.add_column("", style="green", justify="right")
+    summary.add_row("Domain", domain)
     summary.add_row("Experiments run", str(total_count))
     summary.add_row("Changes kept", str(kept_count))
     summary.add_row("Baseline Sharpe", f"{baseline_metric:.4f}")
@@ -290,10 +319,16 @@ def run_loop(max_experiments: int = 20, time_limit_minutes: int = 60):
     else:
         console.print("\n[yellow]No improvements found. Baseline strategy retained.[/yellow]")
 
-    console.print(f"\nExperiment log: {LOG_PATH}")
-    console.print(f"Strategy file:  {STRATEGY_PATH}")
-    console.print(f"Git log:        git log --oneline strategy.py\n")
+    console.print(f"\nExperiment log: {log_path}")
+    console.print(f"Strategy file:  {strategy_path}")
+    console.print(f"Git log:        git log --oneline {strategy_file}\n")
 
 
 if __name__ == "__main__":
-    run_loop()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--domain", "-d", default="stock_picker")
+    parser.add_argument("--experiments", "-n", type=int, default=20)
+    parser.add_argument("--time-limit", "-t", type=int, default=60)
+    args = parser.parse_args()
+    run_loop(max_experiments=args.experiments, time_limit_minutes=args.time_limit, domain=args.domain)

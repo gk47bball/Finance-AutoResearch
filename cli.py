@@ -39,10 +39,11 @@ def research(no_deep_dive, output):
 @cli.command()
 @click.option("--experiments", "-n", default=20, help="Max experiments to run")
 @click.option("--time-limit", "-t", default=60, help="Time limit in minutes")
-def optimize(experiments, time_limit):
+@click.option("--domain", "-d", default="stock_picker", help="Strategy domain")
+def optimize(experiments, time_limit, domain):
     """Run the AutoResearch optimization loop."""
     from loop import run_loop
-    run_loop(max_experiments=experiments, time_limit_minutes=time_limit)
+    run_loop(max_experiments=experiments, time_limit_minutes=time_limit, domain=domain)
 
 
 @cli.command()
