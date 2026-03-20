@@ -46,16 +46,17 @@ def optimize(experiments, time_limit):
 
 
 @cli.command()
-def backtest():
+@click.option("--domain", "-d", default="stock_picker", help="Strategy domain")
+def backtest(domain):
     """Backtest the current strategy and show metrics."""
     from prepare import load_strategy, run_full_cycle
-    console.print("\n[bold blue]Running backtest...[/bold blue]\n")
-    strategy = load_strategy()
+    console.print(f"\n[bold blue]Running backtest ({domain})...[/bold blue]\n")
+    strategy = load_strategy(domain=domain)
     result = run_full_cycle(strategy, show_progress=True)
 
     m = result.backtest.metrics
     if m:
-        table = Table(title="Backtest Results")
+        table = Table(title=f"Backtest Results — {domain}")
         table.add_column("Metric", style="cyan")
         table.add_column("Value", style="green", justify="right")
 
@@ -70,9 +71,102 @@ def backtest():
         table.add_row("Total Return", f"{m.get('total_return', 0):.1%}")
         table.add_row("Win Rate", f"{m.get('win_rate', 0):.1%}")
 
+        # Turnover stats if available
+        bt = result.backtest
+        if bt.avg_annual_turnover > 0:
+            table.add_row("Avg Annual Turnover", f"{bt.avg_annual_turnover:.0%}")
+            table.add_row("Total Commission Drag", f"{bt.total_commission_drag:.2%}")
+
         console.print(table)
     else:
         console.print("[red]No backtest results available.[/red]")
+
+
+@cli.command()
+@click.option("--domain", "-d", default="stock_picker", help="Strategy domain")
+@click.option("--quick", is_flag=True, help="Quick validation (fewer trials)")
+def validate(domain, quick):
+    """Run the full validation suite (CV, regime, sensitivity, significance)."""
+    from prepare import load_strategy, load_config
+    from evaluation.validation import run_full_validation
+
+    console.print(f"\n[bold blue]Full Validation Suite — {domain}[/bold blue]\n")
+    strategy = load_strategy(domain=domain)
+    config = load_config()
+    val_cfg = config.get("validation", {})
+
+    report = run_full_validation(
+        strategy,
+        benchmark=config.get("backtest", {}).get("benchmark", "SPY"),
+        commission_bps=config.get("backtest", {}).get("commission_bps", 5),
+        train_years=val_cfg.get("train_years", 6),
+        val_years=val_cfg.get("val_years", 2),
+        test_years=val_cfg.get("test_years", 2),
+        cv_folds=val_cfg.get("cv_folds", 5),
+        sensitivity_trials=10 if quick else val_cfg.get("sensitivity_trials", 50),
+        sensitivity_perturbation=val_cfg.get("sensitivity_perturbation", 0.20),
+    )
+
+    # Print results
+    console.print("\n[bold]1. Train / Validation / Test Split[/bold]")
+    split_table = Table()
+    split_table.add_column("Window", style="cyan")
+    split_table.add_column("Sharpe", justify="right", style="green")
+    split_table.add_row("Train (in-sample)", f"{report.split.train_sharpe:.4f}")
+    split_table.add_row("Validation", f"{report.split.val_sharpe:.4f}")
+    split_table.add_row("Test (holdout)", f"{report.split.test_sharpe:.4f}")
+    console.print(split_table)
+
+    console.print("\n[bold]2. Time-Series Cross-Validation[/bold]")
+    cv = report.cv
+    cv_table = Table()
+    cv_table.add_column("Fold", style="dim")
+    cv_table.add_column("Sharpe", justify="right", style="green")
+    for i, s in enumerate(cv.fold_sharpes):
+        cv_table.add_row(f"Fold {i+1}", f"{s:.4f}")
+    cv_table.add_row("[bold]Mean +/- Std[/bold]", f"[bold]{cv.mean_sharpe:.4f} +/- {cv.std_sharpe:.4f}[/bold]")
+    console.print(cv_table)
+
+    console.print("\n[bold]3. Bootstrap Confidence Interval (95%)[/bold]")
+    ci = report.bootstrap_ci
+    console.print(f"  Sharpe: {ci.get('sharpe', 0):.4f}  [{ci.get('ci_lower', 0):.4f}, {ci.get('ci_upper', 0):.4f}]")
+    console.print(f"  Standard Error: {ci.get('se', 0):.4f}")
+
+    console.print("\n[bold]4. Statistical Significance (vs Benchmark)[/bold]")
+    sig = report.significance
+    console.print(f"  Delta Sharpe: {sig.get('delta_sharpe', 0):.4f}")
+    console.print(f"  p-value: {sig.get('p_value', 1.0):.4f}")
+    sig_str = "[green]YES[/green]" if sig.get("significant_05") else "[red]NO[/red]"
+    console.print(f"  Significant at 5%: {sig_str}")
+
+    console.print("\n[bold]5. Regime Analysis[/bold]")
+    regime_table = Table()
+    regime_table.add_column("Regime", style="cyan")
+    regime_table.add_column("Sharpe", justify="right")
+    regime_table.add_column("Alpha", justify="right")
+    regime_table.add_column("MaxDD", justify="right")
+    regime_table.add_column("% Time", justify="right")
+    for name, data in report.regime.regimes.items():
+        regime_table.add_row(
+            name.title(),
+            f"{data['sharpe']:.3f}",
+            f"{data['alpha']:.1%}",
+            f"{data['max_drawdown']:.1%}",
+            f"{data['pct_time']:.0%}",
+        )
+    console.print(regime_table)
+
+    console.print("\n[bold]6. Parameter Sensitivity[/bold]")
+    sens = report.sensitivity
+    console.print(f"  Base Sharpe: {sens.base_sharpe:.4f}")
+    console.print(f"  Mean (perturbed): {sens.mean_sharpe:.4f} +/- {sens.std_sharpe:.4f}")
+    console.print(f"  Range: [{sens.min_sharpe:.4f}, {sens.max_sharpe:.4f}]")
+    frag_color = "green" if sens.fragility_score < 0.3 else "yellow" if sens.fragility_score < 0.5 else "red"
+    console.print(f"  Fragility Score: [{frag_color}]{sens.fragility_score:.4f}[/{frag_color}]")
+
+    console.print(f"\n[bold]Composite Robustness Score: {report.robustness_score:.4f}[/bold]")
+    grade = "A" if report.robustness_score > 0.7 else "B" if report.robustness_score > 0.5 else "C" if report.robustness_score > 0.3 else "D"
+    console.print(f"  Grade: [bold]{grade}[/bold]\n")
 
 
 @cli.command("show-strategy")

@@ -37,11 +37,11 @@ def max_drawdown(returns: pd.Series) -> float:
 def calmar_ratio(returns: pd.Series) -> float:
     if returns.empty:
         return 0.0
-    annual_return = (1 + returns.mean()) ** TRADING_DAYS - 1
+    annual_ret = (1 + returns.mean()) ** TRADING_DAYS - 1
     mdd = abs(max_drawdown(returns))
     if mdd == 0:
         return 0.0
-    return float(annual_return / mdd)
+    return float(annual_ret / mdd)
 
 
 def alpha_beta(returns: pd.Series, benchmark_returns: pd.Series) -> tuple[float, float]:
@@ -123,3 +123,120 @@ def compute_all_metrics(
 
 
 PRIMARY_METRIC = "sharpe_ratio"
+
+
+# ---------------------------------------------------------------------------
+# Statistical Tests
+# ---------------------------------------------------------------------------
+
+def bootstrap_sharpe_ci(
+    returns: pd.Series,
+    n_bootstrap: int = 10000,
+    confidence: float = 0.95,
+    block_size: int = 21,
+) -> dict:
+    """Circular block bootstrap confidence interval for the Sharpe ratio.
+
+    Uses blocks of ~21 trading days (1 month) to preserve autocorrelation.
+    Returns: {"sharpe": float, "ci_lower": float, "ci_upper": float, "se": float}
+    """
+    if returns.empty or len(returns) < block_size * 2:
+        sr = sharpe_ratio(returns)
+        return {"sharpe": sr, "ci_lower": sr, "ci_upper": sr, "se": 0.0}
+
+    n = len(returns)
+    values = returns.values
+    n_blocks = int(np.ceil(n / block_size))
+    rng = np.random.default_rng(42)
+
+    bootstrap_sharpes = np.empty(n_bootstrap)
+    for b in range(n_bootstrap):
+        # Circular block bootstrap
+        block_starts = rng.integers(0, n, size=n_blocks)
+        sample_indices = []
+        for start in block_starts:
+            sample_indices.extend(range(start, start + block_size))
+        sample_indices = [idx % n for idx in sample_indices][:n]
+        sample = values[sample_indices]
+
+        std = sample.std()
+        if std == 0:
+            bootstrap_sharpes[b] = 0.0
+        else:
+            bootstrap_sharpes[b] = float(np.sqrt(TRADING_DAYS) * sample.mean() / std)
+
+    alpha = (1 - confidence) / 2
+    ci_lower = float(np.percentile(bootstrap_sharpes, alpha * 100))
+    ci_upper = float(np.percentile(bootstrap_sharpes, (1 - alpha) * 100))
+
+    return {
+        "sharpe": sharpe_ratio(returns),
+        "ci_lower": ci_lower,
+        "ci_upper": ci_upper,
+        "se": float(np.std(bootstrap_sharpes)),
+    }
+
+
+def sharpe_difference_test(
+    strategy_returns: pd.Series,
+    benchmark_returns: pd.Series,
+    n_bootstrap: int = 10000,
+    block_size: int = 21,
+) -> dict:
+    """Test whether the strategy Sharpe is significantly greater than the benchmark Sharpe.
+
+    Uses a paired bootstrap approach (Ledoit-Wolf inspired) to account for
+    correlation between strategy and benchmark returns.
+
+    Returns: {"delta_sharpe": float, "p_value": float, "significant_05": bool, "significant_10": bool}
+    """
+    aligned = pd.concat([strategy_returns, benchmark_returns], axis=1, join="inner").dropna()
+    if len(aligned) < block_size * 2:
+        return {"delta_sharpe": 0.0, "p_value": 1.0, "significant_05": False, "significant_10": False}
+
+    aligned.columns = ["strategy", "benchmark"]
+    strat_vals = aligned["strategy"].values
+    bench_vals = aligned["benchmark"].values
+    n = len(strat_vals)
+
+    # Observed Sharpe difference
+    obs_sharpe_s = sharpe_ratio(aligned["strategy"])
+    obs_sharpe_b = sharpe_ratio(aligned["benchmark"])
+    obs_delta = obs_sharpe_s - obs_sharpe_b
+
+    # Center the returns for the null hypothesis (no difference)
+    # Under H0: both return series have the same Sharpe
+    mean_diff = strat_vals.mean() - bench_vals.mean()
+    centered_strat = strat_vals - mean_diff / 2
+    centered_bench = bench_vals + mean_diff / 2
+
+    rng = np.random.default_rng(42)
+    n_blocks = int(np.ceil(n / block_size))
+    bootstrap_deltas = np.empty(n_bootstrap)
+
+    for b in range(n_bootstrap):
+        block_starts = rng.integers(0, n, size=n_blocks)
+        indices = []
+        for start in block_starts:
+            indices.extend(range(start, start + block_size))
+        indices = [idx % n for idx in indices][:n]
+
+        s_sample = centered_strat[indices]
+        b_sample = centered_bench[indices]
+
+        s_std = s_sample.std()
+        b_std = b_sample.std()
+
+        s_sharpe = np.sqrt(TRADING_DAYS) * s_sample.mean() / s_std if s_std > 0 else 0.0
+        b_sharpe = np.sqrt(TRADING_DAYS) * b_sample.mean() / b_std if b_std > 0 else 0.0
+        bootstrap_deltas[b] = s_sharpe - b_sharpe
+
+    # One-sided p-value: P(delta >= observed_delta | H0)
+    p_value = float(np.mean(bootstrap_deltas >= obs_delta))
+
+    return {
+        "delta_sharpe": obs_delta,
+        "p_value": p_value,
+        "significant_05": p_value < 0.05,
+        "significant_10": p_value < 0.10,
+    }

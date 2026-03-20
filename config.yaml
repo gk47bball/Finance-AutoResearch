@@ -17,6 +17,38 @@ loop:
   experiment_timeout_seconds: 300
   improvement_threshold: 0.02
 
+validation:
+  use_robustness_score: false
+  train_years: 6
+  val_years: 2
+  test_years: 2
+  cv_folds: 5
+  sensitivity_trials: 50
+  sensitivity_perturbation: 0.20
+
+domains:
+  stock_picker:
+    strategy_file: strategy.py
+    benchmark: SPY
+    commission_bps: 5
+  sector_rotation:
+    strategy_file: strategy_sectors.py
+    benchmark: SPY
+    commission_bps: 2
+  tactical_allocation:
+    strategy_file: strategy_macro.py
+    benchmark: SPY
+    commission_bps: 2
+  long_short:
+    strategy_file: strategy_longshort.py
+    benchmark: SPY
+    commission_bps: 5
+    borrow_cost_bps: 50
+  crypto_momentum:
+    strategy_file: strategy_crypto.py
+    benchmark: BTC-USD
+    commission_bps: 10
+
 agent:
   model: "claude-sonnet-4-6"
   max_tokens: 4096
