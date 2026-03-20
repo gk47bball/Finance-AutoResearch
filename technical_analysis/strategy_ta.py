@@ -5,11 +5,8 @@ This is the strategy file that the AutoResearch loop mutates.
 It defines which indicators to use, how to combine them, and
 trading rules for generating signals.
 
-Hypothesis: EXP-TA05 — Increase the weight of the strongest indicator.
-Based on the current strategy configuration, the "trend_score" indicator
-has the highest individual information coefficient (IC) at -0.180 on a
-60-day lookback. Increasing its weight in the signal combination should
-further improve the strategy's overall Sharpe ratio.
+Hypothesis: EXP-TA09 — Increase the weight of the 'trend_score' indicator and decrease the weight of the 'multimac' indicator.
+Based on the current strategy configuration, the 'trend_score' indicator has the highest individual information coefficient (IC) at -0.180 on a 60-day lookback. Increasing its weight in the signal combination and decreasing the weight of the 'multimac' indicator, which has a lower IC of -0.101, should further improve the strategy's overall Sharpe ratio.
 """
 
 STRATEGY_TYPE = "technical_analysis"
@@ -31,7 +28,7 @@ UNIVERSE = {
 INDICATORS = {
     "multimac": {
         "enabled": True,
-        "weight": 0.20,
+        "weight": 0.15,  # Decreased weight for the 'multimac' indicator
         "params": {
             "ma_len_a": 7, "ma_len_b": 11,
             "ma_len_1": 17, "ma_len_2": 27,
@@ -87,7 +84,7 @@ INDICATORS = {
     },
     "trend_score": {
         "enabled": True,
-        "weight": 0.20,  # Increased weight for the strongest indicator
+        "weight": 0.25,  # Increased weight for the 'trend_score' indicator
         "params": {"len1": 13, "len2": 21, "len3": 34, "len4": 55},
         "signal_col": "trend_score",
     },
