@@ -7,8 +7,8 @@ The optimizer agent reads this, proposes changes, and evaluates results
 via walk-forward backtesting with Sharpe ratio as the primary metric.
 
 Last modified: 2026-03-20
-Experiment: 36 — Add operating_margin to quality sub-factors; rebalance weights
-Hypothesis: Operating margin captures business model quality beyond gross margin (shows operating leverage); 5th quality sub-factor
+Experiment: 39 — Boost gross_margin weight in quality to 0.35 (Novy-Marx #1), reduce operating_margin to 0.10 (correlated)
+Hypothesis: Gross profitability / assets is the strongest academic quality signal (Novy-Marx 2013); operating_margin overlaps so reduce it
 Sharpe: 1.4293 (best)
 """
 
@@ -51,9 +51,9 @@ FACTORS = {
     "quality": {
         "weight": 0.30,
         "sub_factors": {
+            "gross_margin":         0.35,   # Gross margin — Novy-Marx best quality signal
             "roe":                  0.25,   # Return on equity
-            "gross_margin":         0.25,   # Gross margin (Novy-Marx profitability proxy)
-            "operating_margin":     0.20,   # Operating margin (business model quality)
+            "operating_margin":     0.10,   # Operating margin (correlated with gross_margin)
             "roa":                  0.15,   # Return on assets (capital efficiency)
             "debt_to_equity_inv":   0.15,   # 1/(1+D/E) — lower debt = higher score
         },
