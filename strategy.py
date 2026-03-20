@@ -40,7 +40,7 @@ SCREENS = [
 # Higher values are always better (use _inv suffix for inverted metrics).
 FACTORS = {
     "value": {
-        "weight": 0.25,
+        "weight": 0.20,
         "sub_factors": {
             "earnings_yield":       0.40,   # 1/PE — higher = cheaper
             "fcf_yield":            0.30,   # FCF/market cap
@@ -65,7 +65,7 @@ FACTORS = {
         },
     },
     "momentum": {
-        "weight": 0.20,
+        "weight": 0.25,
         "sub_factors": {
             "return_12m_1m":        1.00,   # 12-month return minus last month
         },
