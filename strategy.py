@@ -44,7 +44,7 @@ FACTORS = {
         "sub_factors": {
             "earnings_yield":       0.40,   # 1/PE — higher = cheaper
             "fcf_yield":            0.30,   # FCF/market cap
-            "ev_to_ebitda_inv":     0.30,   # 1/EV-to-EBITDA — higher = cheaper
+            "ps_ratio_inv":         0.30,   # 1/P-to-Sales — more reliably populated
         },
     },
     "quality": {

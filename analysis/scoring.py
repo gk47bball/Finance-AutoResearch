@@ -28,10 +28,16 @@ def _compute_sub_factor(ticker: str, sub_factor_name: str, ratios: dict) -> floa
         "eps_growth_1y": "earnings_growth",
         "dividend_yield": "dividend_yield",
         "beta": "beta",
+        "ps_ratio_inv": "ps_ratio",   # will be inverted below
+        "quick_ratio": "quick_ratio",
     }
 
     if sub_factor_name in direct_map:
-        return ratios.get(direct_map[sub_factor_name])
+        val = ratios.get(direct_map[sub_factor_name])
+        # For _inv suffixed mappings that point to a ratio (not already inverted), invert here
+        if sub_factor_name == "ps_ratio_inv" and val is not None and val > 0:
+            return 1.0 / val
+        return val
 
     # Price-based factors
     if sub_factor_name == "return_12m_1m":
