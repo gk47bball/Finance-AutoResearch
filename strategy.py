@@ -7,8 +7,8 @@ The optimizer agent reads this, proposes changes, and evaluates results
 via walk-forward backtesting with Sharpe ratio as the primary metric.
 
 Last modified: 2026-03-20
-Experiment: 39 — Boost gross_margin weight in quality to 0.35 (Novy-Marx #1), reduce operating_margin to 0.10 (correlated)
-Hypothesis: Gross profitability / assets is the strongest academic quality signal (Novy-Marx 2013); operating_margin overlaps so reduce it
+Experiment: 41 — Rebalance value sub-factors: increase FCF yield to 0.40 (manipulation-resistant), reduce earnings_yield to 0.30
+Hypothesis: FCF yield is harder to manipulate than earnings-based yield; stronger predictor of cash returns to shareholders
 Sharpe: 1.4293 (best)
 """
 
@@ -43,8 +43,8 @@ FACTORS = {
     "value": {
         "weight": 0.20,
         "sub_factors": {
-            "earnings_yield":       0.40,   # 1/PE — higher = cheaper
-            "fcf_yield":            0.30,   # FCF/market cap
+            "earnings_yield":       0.30,   # 1/PE — higher = cheaper
+            "fcf_yield":            0.40,   # FCF/market cap — manipulation-resistant
             "ps_ratio_inv":         0.30,   # 1/P-to-Sales — more reliably populated
         },
     },
