@@ -17,7 +17,7 @@ Sharpe: 1.2012
 UNIVERSE = {
     "source": "sp500",                      # sp500 | custom
     "min_market_cap": 2_000_000_000,        # $2B minimum
-    "exclude_sectors": [],                  # e.g. ["Utilities", "Real Estate"]
+    "exclude_sectors": ["Financial Services"],  # Financials have structural high leverage
     "exclude_tickers": [],                  # specific exclusions
 }
 

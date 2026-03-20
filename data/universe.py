@@ -64,4 +64,17 @@ def build_universe(universe_config: dict) -> list[str]:
 
     exclude = set(universe_config.get("exclude_tickers", []))
     tickers = [t for t in tickers if t not in exclude]
+
+    # Apply sector exclusions by fetching sector for each ticker
+    excluded_sectors = set(universe_config.get("exclude_sectors", []))
+    if excluded_sectors:
+        from data.fundamentals import get_key_ratios
+        filtered = []
+        for t in tickers:
+            ratios = get_key_ratios(t)
+            sector = ratios.get("sector", "") if ratios else ""
+            if sector not in excluded_sectors:
+                filtered.append(t)
+        tickers = filtered
+
     return tickers
