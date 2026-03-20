@@ -7,8 +7,8 @@ The optimizer agent reads this, proposes changes, and evaluates results
 via walk-forward backtesting with Sharpe ratio as the primary metric.
 
 Last modified: 2026-03-20
-Experiment: 51 — Remove revenue_growth_3y_cagr (duplicate of revenue_growth_1y in scoring.py); give weight to eps_growth
-Hypothesis: revenue_growth_3y_cagr maps to same ratio as revenue_growth_1y — it's a duplicate signal. Removing it and boosting eps_growth_1y to 0.75 de-duplicates growth factor
+Experiment: 52 — Pure EPS growth signal: eps_growth_1y 1.00 (remove revenue_growth_1y)
+Hypothesis: EPS growth already subsumes revenue growth; using pure EPS growth gives a cleaner single-signal growth factor
 Sharpe: 1.4293 (best)
 """
 
@@ -62,8 +62,7 @@ FACTORS = {
     "growth": {
         "weight": 0.30,
         "sub_factors": {
-            "revenue_growth_1y":    0.25,   # Revenue growth year-over-year
-            "eps_growth_1y":        0.75,   # EPS growth — primary growth signal (compounding)
+            "eps_growth_1y":        1.00,   # EPS growth — pure single-signal growth factor
         },
     },
     "momentum": {
