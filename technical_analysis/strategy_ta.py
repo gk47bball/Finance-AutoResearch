@@ -5,8 +5,9 @@ This is the strategy file that the AutoResearch loop mutates.
 It defines which indicators to use, how to combine them, and
 trading rules for generating signals.
 
-Hypothesis: Baseline — use MultiMAC as primary trend signal
-with Hybrid Oscillator for timing entries.
+Hypothesis: EXP-TA1 — Contrarian mode. All indicators showed negative IC,
+meaning they are mean-reversion signals. Flip direction: buy when oversold.
+Enable top 3 alpha scorers: Z-Factor (97.7), VE-RSI (92.0), MultiMAC_fib (82.1).
 
 STRATEGY_TYPE: technical_analysis
 """
@@ -27,7 +28,7 @@ UNIVERSE = {
 INDICATORS = {
     "multimac": {
         "enabled": True,
-        "weight": 0.30,
+        "weight": 0.25,
         "params": {
             "ma_len_a": 7, "ma_len_b": 11,
             "ma_len_1": 17, "ma_len_2": 27,
@@ -47,13 +48,13 @@ INDICATORS = {
     },
     "hybrid_osc": {
         "enabled": True,
-        "weight": 0.20,
+        "weight": 0.15,
         "params": {"length1": 34, "length2": 55, "ma_len": 8, "scale": 2.7},
         "signal_col": "hybrid_osc",
     },
     "obos": {
         "enabled": True,
-        "weight": 0.15,
+        "weight": 0.10,
         "params": {"ma_len": 17, "lookback": 20},
         "signal_col": "obos",
     },
@@ -71,14 +72,14 @@ INDICATORS = {
     },
     # Disabled by default — can be enabled during optimization
     "ve_rsi": {
-        "enabled": False,
-        "weight": 0.00,
+        "enabled": True,
+        "weight": 0.15,
         "params": {"length": 14},
         "signal_col": "ve_rsi",
     },
     "mfoo": {
-        "enabled": False,
-        "weight": 0.00,
+        "enabled": True,
+        "weight": 0.10,
         "params": {"rsi_length": 14, "obos_ma_len": 17},
         "signal_col": "mfoo",
     },
@@ -110,8 +111,8 @@ INDICATORS = {
         "signal_col": "multimac_dampened",
     },
     "z_hybrid": {
-        "enabled": False,
-        "weight": 0.00,
+        "enabled": True,
+        "weight": 0.10,
         "params": {"fast_len": 21, "slow_len": 34},
         "signal_col": "z_hybrid",
     },
@@ -124,6 +125,7 @@ SIGNAL_RULES = {
     "combination": "weighted_average",  # weighted_average, majority_vote, or strongest
     "normalize": True,                  # Normalize each signal to z-score before combining
     "lookback_for_zscore": 63,          # ~3 months for z-score normalization
+    "flip_signal": False,               # Use trend-following direction
 }
 
 # ---------------------------------------------------------------------------
@@ -131,10 +133,10 @@ SIGNAL_RULES = {
 # ---------------------------------------------------------------------------
 TRADING = {
     "position_sizing": "binary",     # binary (in/out), scaled, or always_in
-    "long_threshold": 0.5,           # Combined signal > this → go long
-    "short_threshold": -0.5,         # Combined signal < this → go short (if enabled)
+    "long_threshold": -0.3,          # Go long when signal > this (lower = more in market)
+    "short_threshold": -1.5,         # Go short when signal < this (if enabled)
     "allow_short": False,            # Whether to take short positions
-    "holding_period_min": 5,         # Minimum days to hold a position
+    "holding_period_min": 1,         # Minimum days to hold a position
     "stop_loss_pct": None,           # Optional stop loss (None = disabled)
     "rebalance_frequency": "daily",  # daily, weekly, monthly
 }

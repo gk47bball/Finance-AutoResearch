@@ -146,6 +146,10 @@ def run_strategy_backtest(strategy_module, verbose: bool = True) -> TABacktestRe
     if total_weight > 0:
         combined_signal /= total_weight
 
+    # Flip signal for contrarian/mean-reversion mode
+    if signal_rules.get("flip_signal", False):
+        combined_signal = -combined_signal
+
     # Generate positions from combined signal
     long_thresh = trading.get("long_threshold", 0.5)
     short_thresh = trading.get("short_threshold", -0.5)
