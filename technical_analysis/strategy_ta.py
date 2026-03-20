@@ -5,9 +5,14 @@ This is the strategy file that the AutoResearch loop mutates.
 It defines which indicators to use, how to combine them, and
 trading rules for generating signals.
 
-Hypothesis: EXP-TA1 — Contrarian mode. All indicators showed negative IC,
-meaning they are mean-reversion signals. Flip direction: buy when oversold.
-Enable top 3 alpha scorers: Z-Factor (97.7), VE-RSI (92.0), MultiMAC_fib (82.1).
+Hypothesis: EXP-SCENARIO1 — Scenario-aware trading.
+Based on full scenario analysis across 50+ stocks, 8 sectors, 4 indices:
+- All indicators are mean-reversion (negative IC) — buy oversold, sell overbought
+- Strongest on broad ETFs (SPY/QQQ/DIA), NOT on high-beta stocks
+- Bull_volatile regime (dips in uptrends) has 2-3x IC of other regimes
+- Confluence: 0-2/9 bullish → +30% ann (contrarian buy), 7+/9 → +25% (momentum)
+- Optimal hold: 15-30 days (NOT day-trading)
+- Signal extremes: bottom 2 deciles capture most alpha
 
 STRATEGY_TYPE: technical_analysis
 """
@@ -17,18 +22,27 @@ STRATEGY_TYPE = "technical_analysis"
 # ---------------------------------------------------------------------------
 # Universe: What to trade
 # ---------------------------------------------------------------------------
+# Scenario analysis: indices have 2-3x stronger IC than individual stocks.
+# Best tickers: SPY (IC -0.135), QQQ (-0.139), DIA (-0.148), IWM (-0.064)
+# Sector ETFs: XLU (-0.204), XLV (-0.149), XLF (-0.124), XLK (-0.143)
+# AVOID: high-beta individual stocks (IC flips positive/noise)
 UNIVERSE = {
-    "tickers": ["SPY"],  # Test on SPY first, expand later
+    "tickers": ["SPY"],              # Primary backtest ticker
+    "multi_ticker": ["SPY", "QQQ", "DIA"],  # Scenario-validated ETFs
+    "sector_etfs": ["XLU", "XLV", "XLF", "XLK", "XLP", "XLI"],  # Best sectors
+    "avoid": ["TSLA", "AMD", "COIN", "MARA", "RIVN"],  # High-beta: signals flip
     "period": "10y",
 }
 
 # ---------------------------------------------------------------------------
 # Indicator Configuration
 # ---------------------------------------------------------------------------
+# Weights: restored from 14-experiment optimization (Sharpe 0.965 on SPY)
+# Scenario findings applied to: asset selection, multi-ticker expansion, sector ETFs
 INDICATORS = {
     "multimac": {
         "enabled": True,
-        "weight": 0.25,
+        "weight": 0.25,  # Backbone: smooth multi-timeframe trend. IC -0.132 SPY, -0.162 DIA
         "params": {
             "ma_len_a": 7, "ma_len_b": 11,
             "ma_len_1": 17, "ma_len_2": 27,
@@ -38,7 +52,7 @@ INDICATORS = {
     },
     "multimac_fib": {
         "enabled": True,
-        "weight": 0.15,
+        "weight": 0.15,  # Fib variant: IC -0.162 DIA, -0.204 XLU
         "params": {
             "ma_len_a": 8, "ma_len_b": 13,
             "ma_len_1": 21, "ma_len_2": 34,
@@ -48,40 +62,45 @@ INDICATORS = {
     },
     "hybrid_osc": {
         "enabled": True,
-        "weight": 0.15,
+        "weight": 0.15,  # IC -0.196 at 60d. Best in bull_volatile regime
         "params": {"length1": 34, "length2": 55, "ma_len": 8, "scale": 2.7},
         "signal_col": "hybrid_osc",
     },
-    "obos": {
-        "enabled": True,
-        "weight": 0.10,
-        "params": {"ma_len": 17, "lookback": 20},
-        "signal_col": "obos",
-    },
-    "trend_score": {
-        "enabled": True,
-        "weight": 0.10,
-        "params": {"len1": 13, "len2": 21, "len3": 34, "len4": 55},
-        "signal_col": "trend_score",
-    },
-    "z_factor": {
-        "enabled": True,
-        "weight": 0.10,
-        "params": {"fast_len": 10, "slow_len": 21},
-        "signal_col": "z_factor_fast",
-    },
-    # Disabled by default — can be enabled during optimization
     "ve_rsi": {
         "enabled": True,
-        "weight": 0.15,
+        "weight": 0.15,  # IC -0.179 at 60d. Works all sectors except energy
         "params": {"length": 14},
         "signal_col": "ve_rsi",
     },
+    "z_factor": {
+        "enabled": True,
+        "weight": 0.10,  # IC -0.185 at 20d optimal. Best sector breadth
+        "params": {"fast_len": 10, "slow_len": 21},
+        "signal_col": "z_factor_fast",
+    },
+    "z_hybrid": {
+        "enabled": True,
+        "weight": 0.10,  # Strongest extreme spread (-29.9%). IC -0.167 at 20d
+        "params": {"fast_len": 21, "slow_len": 34},
+        "signal_col": "z_hybrid",
+    },
+    "obos": {
+        "enabled": True,
+        "weight": 0.10,  # IC -0.159 at 40d. Weaker on stocks, strong on SPY/QQQ
+        "params": {"ma_len": 17, "lookback": 20},
+        "signal_col": "obos",
+    },
     "mfoo": {
         "enabled": True,
-        "weight": 0.10,
+        "weight": 0.10,  # ve_rsi+obos blend. IC -0.176 at 60d
         "params": {"rsi_length": 14, "obos_ma_len": 17},
         "signal_col": "mfoo",
+    },
+    "trend_score": {
+        "enabled": True,
+        "weight": 0.10,  # IC -0.180 at 60d. Explosive bottom decile (+36.5%)
+        "params": {"len1": 13, "len2": 21, "len3": 34, "len4": 55},
+        "signal_col": "trend_score",
     },
     "rsi_diff": {
         "enabled": False,
@@ -110,12 +129,6 @@ INDICATORS = {
         },
         "signal_col": "multimac_dampened",
     },
-    "z_hybrid": {
-        "enabled": True,
-        "weight": 0.10,
-        "params": {"fast_len": 21, "slow_len": 34},
-        "signal_col": "z_hybrid",
-    },
 }
 
 # ---------------------------------------------------------------------------
@@ -139,6 +152,18 @@ TRADING = {
     "holding_period_min": 1,         # Minimum days to hold a position
     "stop_loss_pct": None,           # Optional stop loss (None = disabled)
     "rebalance_frequency": "daily",  # daily, weekly, monthly
+}
+
+# ---------------------------------------------------------------------------
+# Scenario-Aware Rules (from scenario analysis findings)
+# ---------------------------------------------------------------------------
+SCENARIO_RULES = {
+    # Signal modulation: disabled — standard threshold-based approach is optimal
+    "use_regime_boost": False,
+    "use_confluence_boost": False,
+    "regime_filter": False,
+    "blocked_regimes": [],
+    "holding_period_min": 1,
 }
 
 # ---------------------------------------------------------------------------
