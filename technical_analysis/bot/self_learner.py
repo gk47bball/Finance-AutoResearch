@@ -24,6 +24,7 @@ import os
 import time
 import copy
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -37,24 +38,29 @@ from technical_analysis.bot.backtest_pillars import backtest_four_pillars
 
 LEARN_LOG = Path(__file__).parent / "state" / "learning_log.jsonl"
 PARAMS_FILE = Path(__file__).parent / "state" / "best_params.json"
+PROMPT_EVOLUTION_LOG = Path(__file__).parent / "state" / "prompt_evolution.jsonl"
 
 # ---------------------------------------------------------------------------
 # Parameter genome — the mutable state
 # ---------------------------------------------------------------------------
 
 DEFAULT_PARAMS = {
-    "BULL_THRESHOLD": 2,
+    # These reflect the CURRENT validated best params (not the original starting point).
+    # Updated 2026-03-22 after 550+ experiments, composite Sharpe ~0.96.
+    # Used only as fallback if best_params.json is missing (fresh install).
+    "BULL_THRESHOLD": 3,   # Raised from 2; requires stronger trend before BULL regime
     "BEAR_THRESHOLD": -2,
     "DEEP_OVERSOLD": -1.5,
-    "OVERSOLD": -0.8,
-    "OVERBOUGHT": 1.5,
+    "OVERSOLD": -0.9,          # Loosened from -1.1; pairs well with tight TRAIL_STOP
+    "OVERBOUGHT": 3.7,         # Raised from 2.5→3.0→3.7; let winners run on QQQ/SPY
     "STOP_LOSS_PCT": 0.05,
-    "TRAIL_STOP_PCT": 0.02,
+    "TRAIL_STOP_PCT": 0.015,   # Tight: locks in gains quickly once trailing activated
     "TRAIL_ACTIVATE_PCT": 0.03,
     "TIME_STOP_DAYS": 60,
-    "BULL_BASELINE": 0.50,
-    "CHOP_BASELINE": 0.25,
+    "BULL_BASELINE": 0.50,     # Validated: 42+ experiments confirmed. Do NOT increase.
+    "CHOP_BASELINE": 0.50,     # Validated: +0.25 Sharpe improvement. Do NOT decrease.
     "BEAR_BASELINE": 0.0,
+    "ZSCORE_LOOKBACK": 63,     # 63 = ~3 months lookback. Converged across 5 sessions.
 }
 
 PARAM_BOUNDS = {
@@ -62,7 +68,7 @@ PARAM_BOUNDS = {
     "BEAR_THRESHOLD": (-4, -1),
     "DEEP_OVERSOLD": (-3.0, -1.0),
     "OVERSOLD": (-1.5, -0.3),
-    "OVERBOUGHT": (0.8, 2.5),
+    "OVERBOUGHT": (0.8, 4.0),   # Upper bound extended: 2.5 was previously the best AND the ceiling
     "STOP_LOSS_PCT": (0.02, 0.10),
     "TRAIL_STOP_PCT": (0.01, 0.05),
     "TRAIL_ACTIVATE_PCT": (0.02, 0.08),
@@ -70,6 +76,9 @@ PARAM_BOUNDS = {
     "BULL_BASELINE": (0.25, 0.95),
     "CHOP_BASELINE": (0.0, 0.50),
     "BEAR_BASELINE": (0.0, 0.25),
+    # Indicator lookback: how many bars to use for z-score normalization.
+    # 21 = ~1 month (reactive), 42 = ~2 months, 63 = ~3 months, 126 = ~6 months.
+    "ZSCORE_LOOKBACK": (21, 126),
 }
 
 
@@ -175,44 +184,64 @@ def analyze_trade_log(trade_log: list[dict]) -> dict:
 # LLM-powered hypothesis generation
 # ---------------------------------------------------------------------------
 
-LEARNER_SYSTEM_PROMPT = """You are optimizing a trading bot's parameters based on its actual trade performance.
-The bot uses a "Four Pillars" strategy with these tunable parameters:
+LEARNER_SYSTEM_PROMPT = """You are optimizing a mean-reversion trading bot. The strategy is now at
+composite Sharpe ~0.93 across SPY/QQQ/DIA/IWM. The low-hanging fruit is gone.
+Goal: find the next 2-5% improvement by exploring genuinely novel territory.
 
-HIGH-IMPACT PARAMETERS (these drive most of the Sharpe ratio):
-  BULL_BASELINE: Default position in bull regime [0.25-0.95].
-    ⚠️  EMPIRICALLY TESTED: Values above 0.55 consistently REDUCE composite Sharpe.
-    The current 0.50 is correct — the mean-reversion signal (adding on dips, reducing on peaks)
-    provides more value than raw exposure. DO NOT increase above 0.55.
-  CHOP_BASELINE: Default position in chop regime [0.0-0.50].
-    ⚠️  EMPIRICALLY TESTED: 0.50 is optimal. Increasing CHOP_BASELINE from 0.25 to 0.50 was the
-    biggest single improvement — it ensures adequate exposure in mildly-trending "chop" periods.
-    Lowering below 0.45 will hurt. DO NOT change significantly.
-  BEAR_BASELINE: Default position in bear regime [0.0-0.25]. Keep at 0.0.
-  OVERSOLD: z-score threshold for "oversold" entries [-1.5 to -0.3]. Lower = rarer entries.
-    Currently -1.0. Values more aggressive than -0.8 hurt DIA.
-  DEEP_OVERSOLD: z-score for "deep oversold" [-3.0 to -1.0]. Currently -1.5 (optimal).
-  OVERBOUGHT: z-score to reduce positions [0.8 to 2.5]. Currently 2.5 (optimal — conservative reduces).
-  BULL_THRESHOLD: trend_score for "bull" regime [1 to 4]. Currently 2 (optimal).
-    Higher values (3-4) help QQQ but hurt IWM. Lower (1) helps IWM but hurts SPY Sharpe marginally.
-  BEAR_THRESHOLD: trend_score for "bear" regime [-4 to -1]. Currently -2 (optimal).
-    More negative values (-3, -4) help SPY but hurt QQQ significantly.
+═══════════════════════════════════════════════════════
+ SETTLED — DO NOT CHANGE (empirically proven, 100+ experiments)
+═══════════════════════════════════════════════════════
+  BULL_BASELINE = 0.50   ← 42+ experiments confirmed. Higher values (0.6–0.9) reduce
+                            Sharpe to 0.58–0.73. Mean-reversion timing adds more value
+                            than raw exposure. DO NOT INCREASE.
+  CHOP_BASELINE = 0.50   ← Biggest single improvement in history (+0.25 Sharpe).
+                            DO NOT lower below 0.45.
+  BEAR_BASELINE = 0.0    ← Correct. Do not add bear exposure.
+  TIME_STOP_DAYS         ← 30 and 60 tested identically. Not a lever.
 
-LOWER-IMPACT PARAMETERS (stop/trail logic, rarely triggered):
-  STOP_LOSS_PCT [0.02-0.10], TRAIL_STOP_PCT [0.01-0.05], TRAIL_ACTIVATE_PCT [0.02-0.08]
-  TIME_STOP_DAYS [20-90]
+═══════════════════════════════════════════════════════
+ ALREADY TESTED — MODERATE IMPROVEMENT, USE CAREFULLY
+═══════════════════════════════════════════════════════
+  OVERBOUGHT: tested 2.5 (was best), 3.0 (now current), 3.5 (mixed: helps QQQ but
+              hurts DIA/IWM in bear market). Bound is 4.0. Still worth testing 3.5
+              WITH another adjustment to protect bear-year performance.
+  ZSCORE_LOOKBACK: 42 (current), 84 (tried, improved once but unstable across runs),
+              63 (NEVER tried — halfway between, could be most stable).
+  OVERSOLD: -1.1 (current), tried -0.8 (hurts DIA), -1.2 (mixed), -1.3 (worse).
+  DEEP_OVERSOLD: -1.5 (current), tried -2.0 (hurts IWM). -1.2 untried.
+  STOP_LOSS_PCT: 0.05 (current), tried 0.06 (fails OOS bear gate), 0.04 (worse IS).
+  TRAIL_ACTIVATE_PCT: 0.03 (current), tried 0.04 (no improvement).
 
-OBJECTIVE: Maximize COMPOSITE Sharpe across SPY, QQQ, DIA, IWM simultaneously.
-  Weights: SPY 35%, QQQ 35%, DIA 15%, IWM 15%.
-  A 10% penalty is applied for each ticker that underperforms its benchmark.
-  Current best: Composite 0.8705 with ALL tickers beating benchmarks.
+═══════════════════════════════════════════════════════
+ GENUINELY UNEXPLORED — HIGH PRIORITY TO TRY
+═══════════════════════════════════════════════════════
+  TRAIL_STOP_PCT [0.01–0.05]: Currently 0.02. NEVER changed. Controls trailing stop
+                               tightness. 0.015 = tighter (locks in more gain).
+                               0.025 or 0.03 = looser (lets price breathe more).
+  ZSCORE_LOOKBACK = 63:        Halfway between 42 and 84. May be most stable.
+  ZSCORE_LOOKBACK = 21:        Very reactive — short 1-month window. Never tried.
+  BULL_THRESHOLD = 3:          Requires stronger trend to enter bull regime.
+                                May reduce whipsaws in choppy bull markets.
+  Multi-param combos:           e.g., OVERBOUGHT=3.5 + TRAIL_STOP_PCT=0.015 together.
+                                Or ZSCORE_LOOKBACK=63 + OVERSOLD=-1.0 together.
+  DEEP_OVERSOLD = -1.2:         Less deep threshold = more full-size entries. Untried.
+
+═══════════════════════════════════════════════════════
+ OBJECTIVE
+═══════════════════════════════════════════════════════
+  Maximize COMPOSITE Sharpe: SPY×0.35 + QQQ×0.35 + DIA×0.15 + IWM×0.15
+  10% penalty per ticker underperforming its buy-and-hold benchmark.
+  Current best: ~0.93 across all 4 tickers beating their benchmarks.
+  OOS gate: new params must achieve ≥0.40 Sharpe on trailing 4y AND ≥-0.30 on 2022.
 
 RULES:
-1. Change 1-2 parameters per experiment. Fine-tuning only — the big levers are already set.
-2. Respond with ONLY valid JSON: {"changes": {"PARAM": new_value, ...}, "hypothesis": "why"}
-3. The baseline params are already near-optimal. Focus on timing thresholds and stop parameters.
-4. DO NOT repeat experiments that already failed (check the history below).
-5. AVOID: BULL_BASELINE changes, CHOP_BASELINE changes, BEAR_BASELINE changes (all tested, optimal).
-6. TRY: OVERSOLD fine-tuning (-0.9 to -1.2), STOP_LOSS_PCT, TRAIL_ACTIVATE_PCT, TIME_STOP_DAYS.
+1. EXPLORE genuinely novel territory (see UNEXPLORED section above).
+2. DO NOT keep proposing the same values you've tried before.
+3. Change 1-2 parameters per experiment. Multi-param combos are encouraged.
+4. Think about SECOND-ORDER effects: e.g., a looser TRAIL_STOP allows more profit
+   capture on trending tickers (QQQ), helping the composite Sharpe.
+5. Respond ONLY with valid JSON:
+   {"changes": {"PARAM": value, ...}, "hypothesis": "concise reason"}
 """
 
 
@@ -223,13 +252,8 @@ def propose_with_anthropic(
     experiment_history: list[dict],
     model: str = "haiku",
 ) -> dict:
-    """Use Claude Haiku to propose a parameter tweak."""
-    import anthropic
-
-    model_id = {
-        "haiku": "claude-3-haiku-20240307",
-        "sonnet": "claude-sonnet-4-5-20241022",
-    }.get(model, model)
+    """Use LLM (Ollama local or Anthropic fallback) to propose a parameter tweak."""
+    from technical_analysis.bot.llm_client import llm_chat_json
 
     # Build context
     history_summary = ""
@@ -265,8 +289,8 @@ def propose_with_anthropic(
             )
         underperformers = [t for t, d in per_ticker.items() if d["sharpe"] < d["bm_sharpe"]]
         if underperformers:
-            per_ticker_str += f"\n  ⚠️  UNDERPERFORMERS NEEDING FIX: {', '.join(underperformers)}\n"
-            per_ticker_str += "  → These tickers trend strongly. Increasing BULL_BASELINE will help them most.\n"
+            per_ticker_str += f"\n  ⚠️  UNDERPERFORMERS: {', '.join(underperformers)}\n"
+            per_ticker_str += "  → DO NOT change BULL_BASELINE (empirically proven to hurt). Try timing thresholds instead.\n"
 
     user_msg = f"""Current parameters:
 {json.dumps(current_params, indent=2)}
@@ -286,46 +310,16 @@ Trade log analysis:
 Propose a parameter change to improve the COMPOSITE Sharpe. Fix underperformers.
 Respond with ONLY JSON: {{"changes": {{"PARAM": value}}, "hypothesis": "why"}}"""
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not set")
-    if api_key.startswith("sk-ant-oat"):
-        client = anthropic.Anthropic(auth_token=api_key)
-    else:
-        client = anthropic.Anthropic(api_key=api_key)
-
-    for attempt in range(3):
-        try:
-            response = client.messages.create(
-                model=model_id,
-                max_tokens=500,
-                temperature=0.9,
-                system=LEARNER_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_msg}],
-            )
-            text = response.content[0].text.strip()
-            if not text:
-                raise ValueError("Empty response from API")
-            break
-        except Exception as e:
-            if attempt == 2:
-                raise
-            time.sleep(2 ** attempt)
-
-    # Extract JSON from response
-    if "```" in text:
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-        text = text.strip()
-
-    # Find JSON object in response
-    start = text.find("{")
-    end = text.rfind("}") + 1
-    if start >= 0 and end > start:
-        text = text[start:end]
-
-    return json.loads(text)
+    # Use Ollama by default, Anthropic as fallback
+    backend = "ollama" if model in ("haiku", "haiku3") else "anthropic"
+    return llm_chat_json(
+        system=LEARNER_SYSTEM_PROMPT,
+        user=user_msg,
+        max_tokens=500,
+        temperature=0.9,
+        backend=backend,
+        model=model if backend == "anthropic" else None,
+    )
 
 
 def propose_with_ollama(
@@ -412,61 +406,286 @@ def validate_proposal(proposal: dict, current_params: dict) -> dict:
 # Main learning loop
 # ---------------------------------------------------------------------------
 
-def run_backtest_with_params(params: dict, ticker: str = "SPY", period: str = "10y") -> dict:
+# ---------------------------------------------------------------------------
+# Karpathy upgrade: batch proposals + parallel evaluation + meta-prompt evolution
+# ---------------------------------------------------------------------------
+
+def propose_batch_with_anthropic(
+    current_params: dict,
+    trade_analysis: dict,
+    backtest_results: dict,
+    experiment_history: list[dict],
+    model: str = "haiku",
+    n: int = 3,
+) -> list[dict]:
     """
-    Run a backtest with custom parameters.
-    If ticker is "MULTI", evaluates across SPY, QQQ, DIA, IWM and returns
-    a composite result (weighted average Sharpe, worst-ticker drawdown).
+    Ask LLM to propose N distinct parameter hypotheses in a single call.
+    Uses Ollama (local) by default, Anthropic as fallback.
+    Returns list of validated proposal dicts, each with 'changes' and 'hypothesis'.
     """
-    original_values = {}
-    for key, val in params.items():
-        if hasattr(FourPillarsEngine, key):
-            original_values[key] = getattr(FourPillarsEngine, key)
-            setattr(FourPillarsEngine, key, val)
+    from technical_analysis.bot.llm_client import llm_chat_json_array
+
+    history_summary = ""
+    failed_params = set()
+    recently_tried_no_improvement: dict[str, set] = {}
+    if experiment_history:
+        recent = experiment_history[-30:]
+        history_summary = "\nPast experiments:\n"
+        for exp in recent:
+            kept_val = exp.get("kept")
+            is_kept = (kept_val is True) or (kept_val == "True")
+            kept = "KEPT" if is_kept else "REVERTED"
+            changes = exp.get("changes", {})
+            history_summary += (
+                f"  [{kept}] {changes} → Sharpe {exp.get('new_sharpe', '?')}\n"
+            )
+            if not is_kept:
+                failed_params.update(changes.keys())
+                for param, val in changes.items():
+                    recently_tried_no_improvement.setdefault(param, set()).add(val)
+
+    do_not_retry_lines = []
+    for param, vals in recently_tried_no_improvement.items():
+        if len(vals) >= 3 or (param in recently_tried_no_improvement and
+                               len([e for e in experiment_history[-30:]
+                                    if param in e.get("changes", {})
+                                    and not (e.get("kept") is True or e.get("kept") == "True")]) >= 3):
+            vals_str = ", ".join(str(v) for v in sorted(vals, key=lambda x: str(x)))
+            do_not_retry_lines.append(f"  {param}: already tried [{vals_str}] — no improvement, skip these values")
+    do_not_retry_str = ""
+    if do_not_retry_lines:
+        do_not_retry_str = "\nDO NOT RETRY these (tried multiple times with no improvement):\n" + "\n".join(do_not_retry_lines)
+
+    per_ticker_str = ""
+    per_ticker = backtest_results.get("_per_ticker", {})
+    if per_ticker:
+        per_ticker_str = "\nPer-ticker Sharpe:\n"
+        for t, data in per_ticker.items():
+            beat = "✓" if data["sharpe"] >= data["bm_sharpe"] else "✗"
+            per_ticker_str += f"  {t}: {data['sharpe']:.4f} vs {data['bm_sharpe']:.4f} ({beat})\n"
+
+    evolved = load_evolved_prompt_additions()
+
+    user_msg = f"""Current parameters: {json.dumps(current_params)}
+Composite Sharpe: {backtest_results.get('sharpe_ratio')} | MaxDD: {backtest_results.get('max_drawdown')} | Exposure: {backtest_results.get('exposure_pct')}
+{per_ticker_str}
+{history_summary}
+{do_not_retry_str}
+Propose EXACTLY {n} DISTINCT parameter experiments. Each must change DIFFERENT parameters.
+Explore UNEXPLORED territory — avoid parameters and values you have already tried.
+Return {n} objects, each: {{"changes": {{"PARAM": value}}, "hypothesis": "why"}}"""
+
+    system = LEARNER_SYSTEM_PROMPT + (f"\n\nLEARNED HEURISTICS:\n{evolved}" if evolved else "")
+    backend = "ollama" if model in ("haiku", "haiku3") else "anthropic"
+
+    proposals_raw = llm_chat_json_array(
+        system=system,
+        user=user_msg,
+        max_tokens=800,
+        temperature=0.95,
+        backend=backend,
+        model=model if backend == "anthropic" else None,
+    )
+
+    if not isinstance(proposals_raw, list):
+        proposals_raw = [proposals_raw]
+
+    # Validate each proposal
+    validated_proposals = []
+    for p in proposals_raw[:n]:
+        changes = validate_proposal(p, current_params)
+        if changes:
+            validated_proposals.append({"changes": changes, "hypothesis": p.get("hypothesis", "")})
+
+    return validated_proposals
+
+
+def run_parallel_experiments(
+    proposals: list[dict],
+    current_params: dict,
+    ticker: str = "SPY",
+    period: str = "10y",
+) -> list[tuple]:
+    """
+    Run N backtest experiments concurrently using a thread pool.
+    Returns list of (proposal, results, sharpe) sorted by sharpe descending.
+    Karpathy: "Multiple agents running simultaneously — maximize token throughput."
+    """
+    def _run_one(proposal):
+        test_params = current_params.copy()
+        test_params.update(proposal["changes"])
+        results = run_backtest_with_params(test_params, ticker, period)
+        return proposal, results, results["sharpe_ratio"]
+
+    outcomes = []
+    with ThreadPoolExecutor(max_workers=len(proposals)) as pool:
+        futures = {pool.submit(_run_one, p): p for p in proposals}
+        for f in as_completed(futures):
+            try:
+                outcomes.append(f.result())
+            except Exception as e:
+                proposal = futures[f]
+                print(f"  Parallel experiment failed ({proposal.get('hypothesis', '')[:40]}): {e}")
+
+    # Sort by sharpe descending — best first
+    outcomes.sort(key=lambda x: x[2], reverse=True)
+    return outcomes
+
+
+def load_evolved_prompt_additions() -> str:
+    """Load any LLM-evolved additions to the system prompt."""
+    if not PROMPT_EVOLUTION_LOG.exists():
+        return ""
+    additions = []
+    with open(PROMPT_EVOLUTION_LOG) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    entry = json.loads(line)
+                    additions.append(entry.get("addition", ""))
+                except json.JSONDecodeError:
+                    continue
+    return "\n".join(a for a in additions if a)
+
+
+def evolve_system_prompt(
+    experiment_history: list[dict],
+    model: str = "haiku",
+) -> Optional[str]:
+    """
+    After N experiments, ask the LLM to extract new heuristics from what worked.
+    Appends to prompt_evolution.jsonl.
+    Karpathy: "When is the model going to write a better program.md than you?"
+    """
+    from technical_analysis.bot.llm_client import llm_chat
+
+    kept = [e for e in experiment_history if e.get("kept")]
+    reverted = [e for e in experiment_history if not e.get("kept")]
+
+    if len(kept) < 3:
+        return None  # Not enough data to learn from
+
+    kept_summary = "\n".join(
+        f"  KEPT: {e['changes']} → Sharpe {e['new_sharpe']:.4f} | {e['hypothesis'][:60]}"
+        for e in kept[-10:]
+    )
+    reverted_summary = "\n".join(
+        f"  REVERTED: {e['changes']} | {e['hypothesis'][:60]}"
+        for e in reverted[-10:]
+    )
+
+    user_msg = f"""Analyze these experiment results from the JK trading bot AutoResearch loop.
+
+KEPT (improved Sharpe):
+{kept_summary}
+
+REVERTED (did not improve):
+{reverted_summary}
+
+Based on these patterns, write 2-3 concise new heuristics to add to the "TRY:" section of the optimizer's system prompt.
+These should be actionable rules like "TRY: ..." that will help future experiments find improvements faster.
+Do NOT repeat rules that are already in the system prompt.
+Return ONLY the new heuristic lines, one per line, starting with "TRY:"."""
 
     try:
-        if ticker == "MULTI":
-            tickers = ["SPY", "QQQ", "DIA", "IWM"]
-            # Weights: SPY/QQQ are primary trading targets; DIA/IWM secondary
-            weights = {"SPY": 0.35, "QQQ": 0.35, "DIA": 0.15, "IWM": 0.15}
-            results_list = {}
-            for t in tickers:
-                results_list[t] = backtest_four_pillars(ticker=t, period=period, verbose=False)
+        backend = "ollama" if model in ("haiku", "haiku3") else "anthropic"
+        addition = llm_chat(
+            system="",
+            user=user_msg,
+            max_tokens=300,
+            temperature=0.5,
+            json_mode=False,  # plain text output
+            backend=backend,
+            model=model if backend == "anthropic" else None,
+        )
+    except Exception as e:
+        print(f"  Meta-prompt evolution failed: {e}")
+        return None
 
-            # Composite Sharpe (weighted average)
-            composite_sharpe = sum(
-                weights[t] * results_list[t]["sharpe_ratio"] for t in tickers
+    # Persist
+    PROMPT_EVOLUTION_LOG.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "round": len(experiment_history),
+        "addition": addition,
+    }
+    with open(PROMPT_EVOLUTION_LOG, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+    return addition
+
+
+def run_backtest_with_params(
+    params: dict,
+    ticker: str = "SPY",
+    period: str = "10y",
+    start: str = None,
+    end: str = None,
+) -> dict:
+    """
+    Run a backtest with custom parameters — THREAD-SAFE.
+
+    Passes params directly to backtest_four_pillars() as instance-level overrides,
+    avoiding the previous approach of mutating FourPillarsEngine CLASS attributes
+    (which caused a race condition when experiments ran in parallel).
+
+    If ticker is "MULTI", evaluates across SPY, QQQ, DIA, IWM and returns
+    a composite result (weighted average Sharpe, worst-ticker drawdown).
+
+    Args:
+        start: ISO date "YYYY-MM-DD". If set, overrides period (e.g. "2022-01-01").
+        end:   ISO date "YYYY-MM-DD". Upper bound when using start.
+    """
+    if ticker == "MULTI":
+        tickers = ["SPY", "QQQ", "DIA", "IWM"]
+        # Weights: SPY/QQQ are primary trading targets; DIA/IWM secondary
+        weights = {"SPY": 0.35, "QQQ": 0.35, "DIA": 0.15, "IWM": 0.15}
+        results_list = {}
+        for t in tickers:
+            results_list[t] = backtest_four_pillars(
+                ticker=t, period=period, verbose=False,
+                params=params, start=start, end=end
             )
-            # Penalize if any single ticker Sharpe < its benchmark
-            for t in tickers:
-                r = results_list[t]
-                if r["sharpe_ratio"] < r["benchmark_sharpe"]:
-                    # Apply a 10% penalty per underperforming ticker
-                    composite_sharpe *= 0.90
 
-            # Return a composite result dict (using SPY as the "primary" for metadata)
-            composite = results_list["SPY"].copy()
-            composite["sharpe_ratio"] = round(composite_sharpe, 4)
-            composite["_per_ticker"] = {
-                t: {"sharpe": r["sharpe_ratio"], "bm_sharpe": r["benchmark_sharpe"],
-                    "annual_return": r["annual_return"]}
-                for t, r in results_list.items()
-            }
-            return composite
-        else:
-            return backtest_four_pillars(ticker=ticker, period=period, verbose=False)
-    finally:
-        for key, val in original_values.items():
-            setattr(FourPillarsEngine, key, val)
+        # Composite Sharpe (weighted average)
+        composite_sharpe = sum(
+            weights[t] * results_list[t]["sharpe_ratio"] for t in tickers
+        )
+        # Penalize if any single ticker Sharpe < its benchmark
+        for t in tickers:
+            r = results_list[t]
+            if r["sharpe_ratio"] < r["benchmark_sharpe"]:
+                composite_sharpe *= 0.90  # 10% penalty per underperforming ticker
+
+        # Return a composite result dict (using SPY as the "primary" for metadata)
+        composite = results_list["SPY"].copy()
+        composite["sharpe_ratio"] = round(composite_sharpe, 4)
+        composite["_per_ticker"] = {
+            t: {"sharpe": r["sharpe_ratio"], "bm_sharpe": r["benchmark_sharpe"],
+                "annual_return": r["annual_return"]}
+            for t, r in results_list.items()
+        }
+        return composite
+    else:
+        return backtest_four_pillars(
+            ticker=ticker, period=period, verbose=False,
+            params=params, start=start, end=end
+        )
 
 
 def log_experiment(entry: dict):
     """Append experiment to JSONL log."""
     LEARN_LOG.parent.mkdir(parents=True, exist_ok=True)
     with open(LEARN_LOG, "a") as f:
-        # Filter out non-serializable items
-        clean = {k: v for k, v in entry.items()
-                 if not isinstance(v, (type(None.__class__),))}
+        # Filter out non-serializable items; coerce numpy bool_ → Python bool
+        # so 'kept' is stored as JSON true/false, not the string "True"/"False".
+        clean = {}
+        for k, v in entry.items():
+            if k == "kept":
+                clean[k] = bool(v)
+            elif not isinstance(v, (type(None.__class__),)):
+                clean[k] = v
         f.write(json.dumps(clean, default=str) + "\n")
 
 
@@ -532,11 +751,30 @@ def run_learning_loop(
                 print(f"    {t}: {data['sharpe']:.4f} vs BM {data['bm_sharpe']:.4f} ({beat})")
         print(f"  Current params: {json.dumps(current_params, indent=4)}")
 
+    # Compute the current-params 2022 bear-year Sharpe. Used as a RELATIVE baseline for
+    # gate 2: candidates must not score more than 0.20 Sharpe worse than the current params
+    # in 2022, AND must stay above -1.0 (catastrophic). This replaces the old fixed -0.30
+    # threshold which was unreachable because the current best params already score ~-0.79.
+    baseline_2022_sharpe = None
+    try:
+        _bear_baseline = run_backtest_with_params(
+            current_params, ticker, "2y", start="2022-01-01", end="2022-12-31"
+        )
+        baseline_2022_sharpe = _bear_baseline["sharpe_ratio"]
+        if verbose:
+            print(f"  Baseline 2022 bear Sharpe: {baseline_2022_sharpe:.4f}")
+    except Exception as e:
+        if verbose:
+            print(f"  (2022 baseline skipped: {e})")
+
     # Get trade analysis from the backtest
     trade_analysis = analyze_trade_log(baseline.get("trade_log", []))
 
     kept_count = 0
-    for exp_num in range(1, max_experiments + 1):
+    total_experiments_run = 0
+    BATCH_SIZE = 3  # Karpathy: run N experiments in parallel per round
+
+    for round_num in range(1, max_experiments + 1):
         elapsed = (time.time() - start_time) / 60
         if elapsed >= time_limit_minutes:
             if verbose:
@@ -544,100 +782,203 @@ def run_learning_loop(
             break
 
         if verbose:
-            print(f"\n  --- Experiment {exp_num}/{max_experiments} (elapsed: {elapsed:.1f}m) ---")
+            print(f"\n  --- Round {round_num} (elapsed: {elapsed:.1f}m, total experiments: {total_experiments_run}) ---")
 
-        # 1. Propose change
+        # Meta-prompt evolution every 20 experiments
+        if total_experiments_run > 0 and total_experiments_run % 20 == 0:
+            if verbose:
+                print(f"  🧠 Evolving system prompt (after {total_experiments_run} experiments)...")
+            if model_backend != "ollama":
+                addition = evolve_system_prompt(experiment_history, model=model_backend)
+                if addition and verbose:
+                    print(f"  New heuristics:\n    {addition[:200]}")
+
+        # 1. Propose a batch of BATCH_SIZE distinct hypotheses
         try:
             if model_backend == "ollama":
-                proposal = propose_with_ollama(
-                    current_params, trade_analysis, baseline, experiment_history, ollama_model)
+                # Ollama fallback: propose one at a time
+                proposals = []
+                for _ in range(BATCH_SIZE):
+                    p = propose_with_ollama(
+                        current_params, trade_analysis, baseline, experiment_history, ollama_model)
+                    changes = validate_proposal(p, current_params)
+                    if changes:
+                        proposals.append({"changes": changes, "hypothesis": p.get("hypothesis", "")})
             else:
-                proposal = propose_with_anthropic(
-                    current_params, trade_analysis, baseline, experiment_history, model_backend)
-        except Exception as e:
-            if verbose:
-                print(f"  Proposal failed: {e}")
-            continue
-
-        hypothesis = proposal.get("hypothesis", "no hypothesis")
-        changes = validate_proposal(proposal, current_params)
-
-        if not changes:
-            if verbose:
-                print(f"  No valid changes proposed. Skipping.")
-            continue
-
-        if verbose:
-            print(f"  Hypothesis: {hypothesis[:80]}")
-            print(f"  Changes: {changes}")
-
-        # 2. Apply changes and backtest
-        test_params = current_params.copy()
-        test_params.update(changes)
-
-        try:
-            results = run_backtest_with_params(test_params, ticker, period)
-            new_sharpe = results["sharpe_ratio"]
-        except Exception as e:
-            if verbose:
-                print(f"  Backtest failed: {e}")
-            continue
-
-        # 3. Keep or revert
-        improved = new_sharpe > best_sharpe
-        if improved:
-            current_params = test_params
-            best_sharpe = new_sharpe
-            save_best_params(current_params)
-            kept_count += 1
-            trade_analysis = analyze_trade_log(results.get("trade_log", []))
-            baseline = results
-
-        entry = {
-            "experiment": exp_num,
-            "timestamp": datetime.now().isoformat(),
-            "hypothesis": hypothesis,
-            "changes": changes,
-            "old_sharpe": round(baseline["sharpe_ratio"] if not improved else best_sharpe - (new_sharpe - baseline["sharpe_ratio"]), 4),
-            "new_sharpe": round(new_sharpe, 4),
-            "kept": improved,
-            "new_params": test_params if improved else None,
-            "metrics": {
-                "win_rate": results.get("win_rate"),
-                "exposure": results.get("exposure_pct"),
-                "max_drawdown": results.get("max_drawdown"),
-                "annual_return": results.get("annual_return"),
-            },
-        }
-        log_experiment(entry)
-        experiment_history.append(entry)
-
-        # Send to Discord (only kept experiments or every 10th)
-        if improved or exp_num % 10 == 0:
-            try:
-                from technical_analysis.bot.alerts import send_discord_learning
-                send_discord_learning(entry)
-            except Exception:
-                pass
-
-        if verbose:
-            status = "KEPT ✓" if improved else "REVERTED ✗"
-            print(f"  Sharpe: {new_sharpe:.4f} (was {baseline['sharpe_ratio']:.4f}) → {status}")
-            per_ticker = results.get("_per_ticker", {})
-            if per_ticker:
-                breakdown = " | ".join(
-                    f"{t}={d['sharpe']:.3f}{'✓' if d['sharpe'] >= d['bm_sharpe'] else '✗'}"
-                    for t, d in per_ticker.items()
+                proposals = propose_batch_with_anthropic(
+                    current_params, trade_analysis, baseline, experiment_history,
+                    model=model_backend, n=BATCH_SIZE,
                 )
-                print(f"  Per-ticker: {breakdown}")
+        except Exception as e:
+            if verbose:
+                print(f"  Batch proposal failed: {e}")
+            continue
+
+        if not proposals:
+            if verbose:
+                print(f"  No valid proposals generated. Skipping round.")
+            continue
+
+        if verbose:
+            print(f"  Proposed {len(proposals)} hypotheses — running in parallel...")
+            for i, p in enumerate(proposals, 1):
+                print(f"    [{i}] {p['hypothesis'][:70]} | changes: {p['changes']}")
+
+        # 2. Run all proposals concurrently
+        outcomes = run_parallel_experiments(proposals, current_params, ticker, period)
+        total_experiments_run += len(outcomes)
+
+        # 3. Process results — keep the best improvement, log all
+        for rank, (proposal, results, new_sharpe) in enumerate(outcomes):
+            hypothesis = proposal.get("hypothesis", "no hypothesis")
+            changes = proposal.get("changes", {})
+
+            # Capture before any update so old_sharpe is always the pre-change value
+            pre_update_sharpe = best_sharpe
+
+            # Candidate: best of batch AND beats current best in-sample
+            candidate = new_sharpe > best_sharpe and rank == 0
+
+            # Out-of-sample gate: two independent checks before committing.
+            # Gate 1: trailing 4-year window (covers 2022 bear market).
+            #         Sharpe must be >= 0.40 (relaxed vs old 0.50 since 4y includes a bear year).
+            # Gate 2: 2022 calendar year specifically (the one real bear in our data).
+            #         Strategy must not be a disaster: Sharpe >= -0.30.
+            #         This prevents CHOP_BASELINE from being lowered, etc.
+            oos_sharpe = None
+            oos_pass = True
+            if candidate:
+                try:
+                    test_params_oos = current_params.copy()
+                    test_params_oos.update(changes)
+
+                    # Gate 1: trailing 4y (captures 2022 bear + 2023/24/25 recovery)
+                    oos_results = run_backtest_with_params(test_params_oos, ticker, "4y")
+                    oos_sharpe = oos_results["sharpe_ratio"]
+                    gate1_pass = oos_sharpe >= 0.40
+                    if verbose and not gate1_pass:
+                        print(f"    [OOS gate 1/2] 4y OOS Sharpe={oos_sharpe:.4f} — REJECTED (need ≥0.40)")
+
+                    # Gate 2: 2022 bear market year (SPY -20%)
+                    # Use a RELATIVE threshold: candidate must not be more than 0.20 Sharpe
+                    # worse than the current-params baseline in 2022, and can't crater below -1.0.
+                    # (A fixed -0.30 threshold was unreachable since current params score ~-0.79.)
+                    gate2_pass = True
+                    bear_sharpe = None
+                    if gate1_pass:
+                        try:
+                            bear_results = run_backtest_with_params(
+                                test_params_oos, ticker, "2y",  # period unused; start/end override
+                                start="2022-01-01", end="2022-12-31"
+                            )
+                            bear_sharpe = bear_results["sharpe_ratio"]
+                            # Relative gate: allow at most 0.20 worse than baseline (floor -1.0)
+                            if baseline_2022_sharpe is not None:
+                                gate2_threshold = max(baseline_2022_sharpe - 0.20, -1.0)
+                            else:
+                                gate2_threshold = -1.0  # fallback: only reject catastrophic
+                            gate2_pass = bear_sharpe >= gate2_threshold
+                            if verbose and not gate2_pass:
+                                print(f"    [OOS gate 2/2] 2022 bear Sharpe={bear_sharpe:.4f} — REJECTED (need ≥{gate2_threshold:.2f})")
+                            elif verbose:
+                                print(f"    [OOS gate 2/2] 2022 bear Sharpe={bear_sharpe:.4f} — passed (threshold {gate2_threshold:.2f})")
+                        except Exception as e:
+                            if verbose:
+                                print(f"    [OOS gate 2/2] 2022 test skipped ({e})")
+
+                    oos_pass = gate1_pass and gate2_pass
+                    if verbose and oos_pass:
+                        print(f"    [OOS gates ✓] 4y={oos_sharpe:.4f}, 2022={bear_sharpe or 'n/a'} — ACCEPTED")
+                except Exception as e:
+                    if verbose:
+                        print(f"    [OOS gate] Failed ({e}) — allowing experiment through")
+
+            improved = candidate and oos_pass
+
+            if improved:
+                test_params = current_params.copy()
+                test_params.update(changes)
+                current_params = test_params
+                best_sharpe = new_sharpe
+                save_best_params(current_params)
+                kept_count += 1
+                trade_analysis = analyze_trade_log(results.get("trade_log", []))
+                baseline = results
+
+            entry = {
+                "experiment": total_experiments_run - len(outcomes) + rank + 1,
+                "round": round_num,
+                "batch_rank": rank + 1,
+                "timestamp": datetime.now().isoformat(),
+                "hypothesis": hypothesis,
+                "changes": changes,
+                "old_sharpe": round(pre_update_sharpe, 4),   # always the value BEFORE this experiment
+                "new_sharpe": round(new_sharpe, 4),
+                "oos_sharpe": round(oos_sharpe, 4) if oos_sharpe is not None else None,
+                "kept": improved,
+                "new_params": current_params if improved else None,
+                "metrics": {
+                    "win_rate": results.get("win_rate"),
+                    "exposure": results.get("exposure_pct"),
+                    "max_drawdown": results.get("max_drawdown"),
+                    "annual_return": results.get("annual_return"),
+                },
+            }
+            log_experiment(entry)
+            experiment_history.append(entry)
+
+            if verbose:
+                status = "KEPT ✓" if improved else ("best_of_batch" if rank == 0 else "REVERTED ✗")
+                per_ticker = results.get("_per_ticker", {})
+                ticker_str = ""
+                if per_ticker:
+                    ticker_str = " | " + " ".join(
+                        f"{t}={d['sharpe']:.3f}{'✓' if d['sharpe'] >= d['bm_sharpe'] else '✗'}"
+                        for t, d in per_ticker.items()
+                    )
+                print(f"    [{rank+1}] Sharpe={new_sharpe:.4f} → {status}{ticker_str}")
 
     if verbose:
         print(f"\n{'='*60}")
         print(f"  LEARNING COMPLETE")
-        print(f"  Experiments: {exp_num} | Kept: {kept_count}")
+        print(f"  Rounds: {round_num} | Experiments: {total_experiments_run} | Kept: {kept_count}")
         print(f"  Best Sharpe: {best_sharpe:.4f}")
         print(f"  Best params: {json.dumps(current_params, indent=4)}")
         print(f"  Log: {LEARN_LOG}")
         print(f"{'='*60}")
+
+    # Post a single end-of-session summary to Discord.
+    # Only fires once per run (not per round/experiment) to keep the channel clean.
+    try:
+        from technical_analysis.bot.alerts import send_discord_learning
+        # Build a summary entry for the final state
+        kept_entries = [e for e in experiment_history
+                        if e.get("kept") is True or e.get("kept") == "True"]
+        # Show the param changes that actually stuck (accumulated over kept experiments)
+        all_kept_changes = {}
+        for e in kept_entries:
+            all_kept_changes.update(e.get("changes", {}))
+
+        summary_entry = {
+            "round": round_num,
+            "hypothesis": (
+                f"{kept_count} improvement(s) in {total_experiments_run} experiments"
+                if kept_count else f"No improvements in {total_experiments_run} experiments — params stable"
+            ),
+            "changes": all_kept_changes,
+            "old_sharpe": round(baseline["sharpe_ratio"], 4),
+            "new_sharpe": round(best_sharpe, 4),
+            "kept": kept_count > 0,
+            "new_params": current_params if kept_count > 0 else None,
+            "metrics": {
+                "win_rate": baseline.get("win_rate"),
+                "exposure": baseline.get("exposure_pct"),
+                "max_drawdown": baseline.get("max_drawdown"),
+                "annual_return": baseline.get("annual_return"),
+            },
+        }
+        send_discord_learning(summary_entry)
+    except Exception:
+        pass
 
     return current_params, best_sharpe

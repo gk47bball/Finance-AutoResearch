@@ -1,0 +1,27 @@
+{
+  "last_seen_id": "116281041925886913",
+  "posts_processed": 25,
+  "alerts_sent": 1,
+  "recent_signals": {
+    "USO_SHORT": "2026-03-23T13:42:55.237208+00:00"
+  },
+  "paper_positions": [],
+  "closed_positions": [
+    {
+      "ticker": "SCO",
+      "signal_ticker": "USO",
+      "leverage_multiplier": 2,
+      "direction": "SHORT",
+      "urgency": "KNEE_JERK",
+      "order_id": "7d098a1a-93bc-4448-b7ea-a211b76654f9",
+      "entry_time": "2026-03-23T13:43:04.172993+00:00",
+      "notional": 571.43,
+      "confidence": 8,
+      "post_id": "116278232362967212",
+      "thesis": "De-escalation of Iran military threat removes imminent oil supply disruption risk; 5-day strike postponement signals red",
+      "close_reason": "take_profit",
+      "pnl_pct": 0.04025
+    }
+  ],
+  "cumulative_realized_pnl": 23.000057499999997
+}

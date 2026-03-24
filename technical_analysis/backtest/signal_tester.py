@@ -14,11 +14,110 @@ Tests performed:
 7. Bootstrap significance: Is the IC statistically significant?
 """
 
+import os
 import numpy as np
 import pandas as pd
+import requests
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Optional
 import yfinance as yf
+
+from dotenv import load_dotenv
+load_dotenv()
+
+
+# ---------------------------------------------------------------------------
+# Alpaca data fetcher (free IEX feed — real-time, no subscription needed)
+# ---------------------------------------------------------------------------
+
+_ALPACA_BASE = "https://data.alpaca.markets/v2/stocks"
+_ALPACA_KEY    = os.environ.get("ALPACA_API_KEY", "")
+_ALPACA_SECRET = os.environ.get("ALPACA_API_SECRET", "")
+
+# Period strings → approximate calendar days (used to build start date)
+_PERIOD_DAYS = {
+    "1d": 1, "5d": 7, "1mo": 35, "3mo": 100, "6mo": 185,
+    "1y": 370, "2y": 740, "5y": 1830, "10y": 3660,
+}
+
+
+def _alpaca_available() -> bool:
+    return bool(_ALPACA_KEY and _ALPACA_SECRET and
+                _ALPACA_KEY != "your_key_here")
+
+
+def fetch_data_alpaca(
+    ticker: str,
+    period: str = "2y",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> Optional[pd.DataFrame]:
+    """
+    Fetch OHLCV daily bars from Alpaca's free IEX data feed.
+    Returns a DataFrame in the same format as fetch_data(), or None on failure.
+
+    Free tier uses the IEX feed — real-time quotes, daily bars back ~5 years.
+    No paid subscription needed; just a free Alpaca paper-trading account.
+    """
+    if not _alpaca_available():
+        return None
+
+    headers = {
+        "APCA-API-KEY-ID":     _ALPACA_KEY,
+        "APCA-API-SECRET-KEY": _ALPACA_SECRET,
+    }
+
+    # Build date range
+    end_dt   = datetime.fromisoformat(end)   if end   else datetime.utcnow()
+    if start:
+        start_dt = datetime.fromisoformat(start)
+    else:
+        days     = _PERIOD_DAYS.get(period, 370)
+        start_dt = end_dt - timedelta(days=days + 10)  # small buffer
+
+    params = {
+        "timeframe": "1Day",
+        "start":     start_dt.strftime("%Y-%m-%d"),
+        "end":       end_dt.strftime("%Y-%m-%d"),
+        "feed":      "iex",       # free tier; "sip" requires paid subscription
+        "limit":     10000,
+        "adjustment": "all",      # split + dividend adjusted — same as yfinance default
+    }
+
+    try:
+        url  = f"{_ALPACA_BASE}/{ticker}/bars"
+        rows = []
+        while True:
+            r = requests.get(url, headers=headers, params=params, timeout=15)
+            r.raise_for_status()
+            data = r.json()
+            bars = data.get("bars", [])
+            if not bars:
+                break
+            rows.extend(bars)
+            token = data.get("next_page_token")
+            if not token:
+                break
+            params["page_token"] = token
+
+        if not rows:
+            return None
+
+        df = pd.DataFrame(rows)
+        df["Date"] = pd.to_datetime(df["t"]).dt.tz_localize(None)
+        df = df.rename(columns={
+            "o": "Open", "h": "High", "l": "Low",
+            "c": "Close", "v": "Volume",
+        })
+        df = df[["Date", "Open", "High", "Low", "Close", "Volume"]]
+        df = df.set_index("Date").sort_index()
+        df.index.name = "Date"
+        return df
+
+    except Exception as e:
+        print(f"  [alpaca] fetch failed for {ticker}: {e}")
+        return None
 
 
 @dataclass
@@ -58,11 +157,48 @@ class MultiTickerResult:
     per_ticker: list  # list of SignalTestResult
 
 
-def fetch_data(ticker: str, period: str = "10y") -> pd.DataFrame:
-    """Fetch OHLCV data from yfinance."""
-    df = yf.download(ticker, period=period, progress=False)
+def fetch_data(
+    ticker: str,
+    period: str = "10y",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> pd.DataFrame:
+    """
+    Fetch OHLCV daily bars.
+
+    Routing logic:
+      - SHORT periods (≤ 2y) and live scans ("5d", "1d", "1mo") → try Alpaca
+        first (real-time IEX, no delay), fall back to yfinance on failure.
+      - LONG periods (> 2y) or explicit start/end for backtests → yfinance
+        directly (10-year data, consistent with AutoResearch history).
+
+    Args:
+        ticker: Ticker symbol.
+        period: Period string e.g. "10y", "2y", "5d". Ignored if start provided.
+        start:  ISO date "YYYY-MM-DD". If set, uses date range (forces yfinance).
+        end:    ISO date "YYYY-MM-DD". Upper bound when using start.
+    """
+    # Long backtests or explicit date ranges → yfinance (has 10y data)
+    _long_periods = {"5y", "10y", "15y", "20y", "max"}
+    use_yfinance_direct = start or (period in _long_periods)
+
+    if not use_yfinance_direct and _alpaca_available():
+        df = fetch_data_alpaca(ticker, period=period, end=end)
+        if df is not None and len(df) >= 5:
+            return df
+        # Alpaca failed → fall through to yfinance
+
+    # yfinance path
+    if start:
+        df = yf.download(ticker, start=start, end=end, progress=False)
+    else:
+        df = yf.download(ticker, period=period, progress=False)
+
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
+    # Drop duplicate columns — yfinance occasionally returns two "Close" columns
+    # after MultiIndex flattening causing shape-(N,2) errors in backtest arithmetic.
+    df = df.loc[:, ~df.columns.duplicated()]
     return df
 
 

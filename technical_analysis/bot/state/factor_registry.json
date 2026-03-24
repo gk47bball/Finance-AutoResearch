@@ -1,0 +1,54 @@
+{
+  "factors": [
+    {
+      "name": "Momentum 5d",
+      "description": "5-day price momentum (annualized). Measures short-term price trend \u2014 are buyers or sellers in control right now?",
+      "created": "2026-03-22T16:24:54.249162",
+      "version": 1
+    },
+    {
+      "name": "Momentum 21d",
+      "description": "21-day price momentum (annualized). The medium-term trend \u2014 where has this ETF been heading over the past month?",
+      "created": "2026-03-22T16:24:54.249170",
+      "version": 1
+    },
+    {
+      "name": "Mean Reversion",
+      "description": "RSI-based mean reversion signal. Positive = oversold (potential bounce), Negative = overbought (potential pullback). Contra-trend opportunity indicator.",
+      "created": "2026-03-22T16:24:54.249171",
+      "version": 1
+    },
+    {
+      "name": "Vol Regime",
+      "description": "Volatility regime: is short-term vol expanding or compressing vs the 63-day baseline? Compressing vol = calmer markets ahead (bullish). Expanding = uncertainty rising.",
+      "created": "2026-03-22T16:24:54.249172",
+      "version": 1
+    },
+    {
+      "name": "Vol Thrust",
+      "description": "Volume thrust: is today's trading volume unusually high, and in which direction? High volume on up moves confirms the trend. High vol on down moves = selling pressure.",
+      "created": "2026-03-22T16:24:54.249173",
+      "version": 1
+    },
+    {
+      "name": "Trend Quality",
+      "description": "ADX-based trend quality. High positive score = strong uptrend. High negative = strong downtrend. Near zero = choppy/sideways \u2014 no clear direction.",
+      "created": "2026-03-22T16:24:54.249174",
+      "version": 1
+    },
+    {
+      "name": "Rel Strength",
+      "description": "21-day return vs SPY (alpha). Which sectors are beating the market? Positive = outperforming SPY, Negative = lagging behind.",
+      "created": "2026-03-22T16:24:54.249175",
+      "version": 1
+    },
+    {
+      "name": "52w Recovery",
+      "description": "Position within 52-week price range. +50 = at 52-week high. -50 = at 52-week low. Shows where prices are relative to a full year of history \u2014 high scores suggest strength, low scores suggest potential deep value.",
+      "created": "2026-03-22T16:24:54.249175",
+      "version": 1
+    }
+  ],
+  "evolution_history": [],
+  "last_evolved": null
+}

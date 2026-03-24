@@ -1,0 +1,6 @@
+{
+  "stop_loss_pct": 0.018,
+  "take_profit_pct": 0.04,
+  "cooldown_hours": 4,
+  "confidence_threshold": 6
+}

@@ -609,6 +609,58 @@ def jk_rsi_saul(df: pd.DataFrame,
 
 
 # ---------------------------------------------------------------------------
+# 16. Retracement/Reversal Factor (RRF)
+# ---------------------------------------------------------------------------
+def jk_rrf(df: pd.DataFrame, period: int = 125) -> pd.DataFrame:
+    """
+    Retracement/Reversal Factor — measures how many times greater the sum of
+    a stock's daily absolute moves is compared to its net directional move.
+
+    Introduced by J. Kornblatt in the 2007 paper "Leaders vs Laggards".
+    Based on (and improves upon) Perry Kauffman's Efficiency Ratio by using
+    a rolling average in the denominator to prevent near-zero distortion when
+    a stock's net move approaches zero.
+
+    Formula:
+        numerator   = rolling mean of (sum of |daily moves| over `period` days)
+        denominator = rolling mean of (|net move over `period` days|)
+        RRF         = numerator / denominator
+
+    Typical values (125-day):
+        Median S&P 500 component:   ~12.5  (stock travels 12.5× its net distance)
+        Top 50 "noisiest" stocks:   ~30+
+        Bottom 50 "smoothest":      ~5
+
+    High RRF = highly oscillating stock = more prone to mean reversion.
+    Low RRF  = steadily trending stock  = mean reversion less reliable.
+
+    A useful pre-filter: prefer candidates where RRF > median of scanned universe,
+    as they have more "noise budget" available for mean reversion to exploit.
+
+    Original concept: Perry Kauffman Efficiency Ratio (inverted + averaged).
+    Implementation: J. Kornblatt (2007).
+    """
+    c = df["Close"]
+    daily_move = c.diff().abs()
+
+    # Numerator: rolling mean of rolling sum of |daily moves|
+    rolling_sum_moves = daily_move.rolling(period).sum()
+    numerator = rolling_sum_moves.rolling(period).mean()
+
+    # Denominator: rolling mean of |net move over period|
+    # Using shift(period) to get the price `period` days ago
+    net_moves = (c - c.shift(period)).abs()
+    denominator = net_moves.rolling(period).mean()
+
+    rrf = numerator / denominator.replace(0, np.nan)
+
+    return pd.DataFrame({
+        "rrf": rrf,
+        "rrf_smooth": rrf.rolling(21).mean(),   # 21-day smooth for display
+    }, index=df.index)
+
+
+# ---------------------------------------------------------------------------
 # Registry of all indicators for the AutoResearch loop
 # ---------------------------------------------------------------------------
 INDICATOR_REGISTRY = {
@@ -713,5 +765,11 @@ INDICATOR_REGISTRY = {
         "signal_col": "rsi_saul_buy",
         "params": {"ma_len": 200, "rsi_len": 2},
         "description": "RSI Saul Mean-Reversion System",
+    },
+    "rrf": {
+        "fn": jk_rrf,
+        "signal_col": "rrf",
+        "params": {"period": 125},
+        "description": "Retracement/Reversal Factor (J. Kornblatt 2007) — measures oscillation relative to net move",
     },
 }

@@ -7,3 +7,17 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+
+# Logs — regenerated on each run
+technical_analysis/bot/state/*.log
+technical_analysis/bot/housing_alpha/state/*.log
+
+# Large binary/image files
+technical_analysis/bot/state/*.png
+
+# Sensitive cached state
+technical_analysis/bot/state/trump_post_cache.json
+technical_analysis/bot/housing_alpha/state/data_cache/
+
+# Claude internal
+.claude/
